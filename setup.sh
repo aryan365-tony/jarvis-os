@@ -7,7 +7,7 @@ echo "Setting up Jarvis-OS build environment..."
 mkdir -p llama/models
 if [ ! -f llama/models/gemma-4-E4B-it-Q4_K_M.gguf ]; then
     echo "Downloading model from Hugging Face..."
-    wget -O llama/models/gemma-4-E4B-it-Q4_K_M.gguf https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf
+    wget -O llama/models/gemma-4-E4B-it-Q4_K_M.gguf https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
 else
     echo "Model already downloaded."
 fi

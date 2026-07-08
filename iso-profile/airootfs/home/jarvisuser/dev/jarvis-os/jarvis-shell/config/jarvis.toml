@@ -1,0 +1,15 @@
+[llm]
+endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+model_name = "gemma-4b-it"
+max_context = 8192
+request_timeout_s = 60
+
+[memory]
+db_path = "/home/jarvisuser/.local/share/jarvis/memory.sqlite3"
+core_memory_max_tokens = 1200
+
+[policy]
+network_allowlist_path = "config/network_allowlist.txt"
+irreversible_requires_confirm = true
+max_tool_calls_per_turn = 6
+max_turns_per_session_task = 25

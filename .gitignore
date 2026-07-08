@@ -1,0 +1,31 @@
+# ISO outputs and working directories
+*.iso
+jarvis-work/
+jarvis-out/
+
+# Large Language Models
+*.gguf
+llama/models/*
+!llama/models/.gitkeep
+
+# Compiled Binaries
+llama/cpu/server-cpu
+llama/gpu/server-gpu
+llama/vendor/
+kernel/last-build.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# OS generated files
+.DS_Store
+Thumbs.db

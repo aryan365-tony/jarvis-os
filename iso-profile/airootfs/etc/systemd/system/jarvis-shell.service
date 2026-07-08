@@ -1,0 +1,21 @@
+[Unit]
+Description=Jarvis Shell Interface
+Requires=llama-server.service
+After=llama-server.service
+
+[Service]
+User=jarvisuser
+ExecStartPre=/home/jarvisuser/dev/jarvis-os/ops/healthcheck.sh
+ExecStart=/home/jarvisuser/dev/jarvis-os/compositor/cage-jarvis.session
+Restart=on-failure
+RestartSec=3
+CPUWeight=100
+MemoryHigh=16G
+Environment=XDG_SESSION_TYPE=wayland
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

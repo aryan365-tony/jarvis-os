@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -uo pipefail
+LOG="/home/jarvisuser/.local/share/jarvis/cage.log"
+while true; do
+  cage -- python -m jarvis.main >>"$LOG" 2>&1
+  code=$?
+  echo "$(date -Is) jarvis.main exited code=$code" >> "$LOG"
+  if [ "$code" -eq 0 ]; then break; fi
+  sleep 2   # backoff before restart, avoid a tight crash loop pegging CPU
+done

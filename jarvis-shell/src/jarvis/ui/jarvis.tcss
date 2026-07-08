@@ -1,0 +1,9 @@
+Screen {
+    background: $background;
+}
+#header {
+    dock: top;
+    height: 3;
+    content-align: center middle;
+    text-style: bold;
+}

@@ -3,6 +3,11 @@ set -e
 
 echo "Setting up Jarvis-OS build environment..."
 
+# Keep the kiosk/session entrypoints executable so systemd can launch them even
+# if a checkout loses mode bits.
+chmod +x compositor/cage-jarvis.session llama/serve.sh ops/healthcheck.sh \
+    llama/scripts/build_backend.sh llama/scripts/detect_gpu.py
+
 # 1. Download the model
 mkdir -p llama/models
 if [ ! -f llama/models/gemma-4-E4B-it-Q4_K_M.gguf ]; then
@@ -18,7 +23,7 @@ if [ ! -f llama/cpu/server-cpu ]; then
     TMP_DIR=$(mktemp -d)
     cd "$TMP_DIR"
     git clone https://github.com/ggerganov/llama.cpp.git .
-    git checkout 5556cd369a4c86e093952ba9529cc5cb121b65e9
+    # # # git checkout 5556cd369a4c86e093952ba9529cc5cb121b65e9
     cmake -B build -DCMAKE_BUILD_TYPE=Release
     cmake --build build --config Release -j"$(nproc)"
     cd - > /dev/null
@@ -35,12 +40,17 @@ mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu
 mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models
 mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/scripts
 mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/jarvis-shell
+mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/compositor
+mkdir -p iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/ops
 mkdir -p iso-profile/airootfs/etc/systemd/system
 
 rsync -a llama/cpu/server-cpu iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu/
 rsync -a llama/models/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
 rsync -a jarvis-shell/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/jarvis-shell/ --exclude '.venv' --exclude '__pycache__'
 rsync -a llama/scripts/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/scripts/
+cp llama/serve.sh iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/
+rsync -a compositor/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/compositor/
+rsync -a ops/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/ops/
 cp systemd/*.service iso-profile/airootfs/etc/systemd/system/
 
 echo "Setup complete! You can now build the ISO by running:"

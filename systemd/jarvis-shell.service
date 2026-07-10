@@ -1,21 +1,32 @@
 [Unit]
 Description=Jarvis Shell Interface
-Requires=llama-server.service
-After=llama-server.service
+# Silent/progressive boot: the shell appears immediately and gains the model in
+# the background, so we only *want* llama-server and never gate on a healthcheck.
+Wants=llama-server.service
+After=systemd-user-sessions.service seatd.service
+Requires=seatd.service
 
 [Service]
+Type=simple
 User=jarvisuser
-ExecStartPre=/home/jarvisuser/dev/jarvis-os/ops/healthcheck.sh
-ExecStart=/home/jarvisuser/dev/jarvis-os/compositor/cage-jarvis.session
-Restart=on-failure
+# PAMName=login opens a full PAM/logind session. pam_systemd then creates
+# /run/user/<uid> and exports XDG_RUNTIME_DIR, which cage/Wayland require. Without
+# this the compositor cannot create its socket and the screen stays black.
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+WorkingDirectory=/home/jarvisuser/dev/jarvis-os/jarvis-shell/src
+Environment=PYTHONPATH=/home/jarvisuser/dev/jarvis-os/jarvis-shell/src
+ExecStart=/bin/bash /home/jarvisuser/dev/jarvis-os/compositor/cage-jarvis.session
+Restart=always
 RestartSec=3
 CPUWeight=100
 MemoryHigh=16G
-Environment=XDG_SESSION_TYPE=wayland
-TTYPath=/dev/tty1
-StandardInput=tty
-StandardOutput=tty
-StandardError=journal
 
 [Install]
 WantedBy=graphical.target

@@ -1,5 +1,6 @@
 [llm]
 endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+health_endpoint = "http://127.0.0.1:8080/health"
 model_name = "gemma-4b-it"
 max_context = 8192
 request_timeout_s = 60
@@ -13,3 +14,20 @@ network_allowlist_path = "config/network_allowlist.txt"
 irreversible_requires_confirm = true
 max_tool_calls_per_turn = 6
 max_turns_per_session_task = 25
+
+[ui]
+reduced_motion = false
+high_contrast = false
+text_scale = 1.0
+show_status_panel_on_start = false
+
+[voice]
+enabled = true
+wake_word = "jarvis"
+stt_model = ""
+tts_voice = ""
+
+[boot]
+# The UI never blocks on these; they only tune the background readiness poller.
+model_ready_timeout_s = 120
+health_poll_interval_s = 1.0

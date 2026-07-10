@@ -127,6 +127,7 @@ xfsprogs
 xl2tpd
 zsh
 cage
+foot
 seatd
 python
 python-pip
@@ -140,3 +141,5 @@ nvidia-open-dkms
 xf86-video-amdgpu
 vulkan-radeon
 plymouth
+python-textual
+python-httpx

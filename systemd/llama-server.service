@@ -3,7 +3,7 @@ Description=llama.cpp inference server (jarvis backend)
 
 [Service]
 User=jarvisuser
-ExecStart=/home/jarvisuser/dev/jarvis-os/llama/serve.sh
+ExecStart=/bin/bash /home/jarvisuser/dev/jarvis-os/llama/serve.sh
 Restart=on-failure
 RestartSec=3
 CPUWeight=150

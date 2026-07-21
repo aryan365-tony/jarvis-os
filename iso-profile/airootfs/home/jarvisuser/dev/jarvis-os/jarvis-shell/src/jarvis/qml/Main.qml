@@ -92,8 +92,13 @@ Window {
         anchors.right: parent.right
         z: 10
         modelState: jarvis.modelState
+        modelOnline: jarvis.modelOnline
         voiceState: jarvis.voiceState
         currentTime: root.currentTime
+
+        onToggleModelOnlineRequested: function(enabled) {
+            jarvis.setModelOnline(enabled)
+        }
     }
 
     // ── Central AI Core Visualizer ─────────────────────────────────────
@@ -181,6 +186,10 @@ Window {
         function onModelStateChanged(state) {
             statusHud.modelState = state
             aiCore.modelState = state
+        }
+
+        function onModelOnlineChanged(enabled) {
+            statusHud.modelOnline = enabled
         }
 
         function onVoiceStateChanged(state) {

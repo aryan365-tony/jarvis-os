@@ -2,7 +2,7 @@
 Description=Download optional Jarvis GGUF model
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=!/home/jarvisuser/dev/jarvis-os/llama/models/gemma-4-E4B-it-Q4_K_M.gguf
+ConditionPathExistsGlob=!/home/jarvisuser/dev/jarvis-os/llama/models/*.gguf
 
 [Service]
 Type=oneshot

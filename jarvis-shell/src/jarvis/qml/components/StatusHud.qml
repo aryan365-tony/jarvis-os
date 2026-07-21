@@ -19,8 +19,10 @@ GlassPanel {
     radius: 0
 
     property string modelState: "initializing"
+    property bool modelOnline: false
     property string voiceState: "initializing"
     property string currentTime: ""
+    signal toggleModelOnlineRequested(bool enabled)
 
     // Override glass for a subtler top bar
     color: Qt.rgba(0.03, 0.04, 0.06, 0.85)
@@ -137,6 +139,34 @@ GlassPanel {
                 font.pixelSize: Theme.fontSmall
                 font.family: Theme.fontFamily
                 opacity: 0.8
+            }
+        }
+
+        // ── Model online/offline control ──────────────────────────────
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 122
+            height: 28
+            radius: 14
+            color: modelOnline ? Qt.rgba(0.10, 0.30, 0.20, 0.90) : Qt.rgba(0.30, 0.18, 0.12, 0.90)
+            border.width: 1
+            border.color: modelOnline ? Theme.green : Theme.amber
+
+            Text {
+                anchors.centerIn: parent
+                text: modelOnline ? "GO OFFLINE" : "GO ONLINE"
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSmall
+                font.bold: true
+                font.family: Theme.fontFamily
+                font.letterSpacing: 1.2
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: hud.toggleModelOnlineRequested(!modelOnline)
             }
         }
 

@@ -9,6 +9,15 @@ MODEL_PATH="$MODEL_DIR/$MODEL_NAME"
 TMP_PATH="$MODEL_PATH.part"
 START_LLAMA=0
 
+find_existing_model() {
+  shopt -s nullglob
+  local matches=("$MODEL_DIR"/*.gguf)
+  shopt -u nullglob
+  if [[ ${#matches[@]} -gt 0 ]]; then
+    printf '%s' "${matches[0]}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --start-llama)
@@ -23,7 +32,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -f "$MODEL_PATH" ]]; then
+EXISTING_MODEL="$(find_existing_model)"
+if [[ -n "$EXISTING_MODEL" ]]; then
+  MODEL_PATH="$EXISTING_MODEL"
   echo "$(date -Is) model already present: $MODEL_PATH"
 else
   mkdir -p "$MODEL_DIR"
@@ -50,6 +61,18 @@ PY
 
   mv "$TMP_PATH" "$MODEL_PATH"
   chmod 0644 "$MODEL_PATH"
+  if [[ ! -s "$MODEL_PATH" ]]; then
+    echo "$(date -Is) ERROR: downloaded model is empty" >&2
+    rm -f "$MODEL_PATH"
+    exit 1
+  fi
+
+  if [[ "$(head -c 4 "$MODEL_PATH" 2>/dev/null || true)" != "GGUF" ]]; then
+    echo "$(date -Is) ERROR: downloaded file does not look like a GGUF model" >&2
+    rm -f "$MODEL_PATH"
+    exit 1
+  fi
+
   echo "$(date -Is) model download complete"
 fi
 

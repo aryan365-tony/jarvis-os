@@ -12,7 +12,7 @@ bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito'
            'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
-airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15')
+airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' "${SQUASHFS_ZSTD_LEVEL:-15}")
 bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
 file_permissions=(
   ["/etc/shadow"]="0:0:400"
@@ -30,6 +30,5 @@ file_permissions=(
   # authoritative way to guarantee the mode. (server-gpu is built on-device,
   # so it is not listed here.)
   ["/usr/local/lib/jarvis/llama/cpu/server-cpu"]="0:0:755"
-  ["/home/jarvisuser/dev/jarvis-os/llama/cpu/server-cpu"]="1000:1000:755"
   ["/home/jarvisuser/dev/jarvis-os/llama/download-model.sh"]="1000:1000:755"
 )

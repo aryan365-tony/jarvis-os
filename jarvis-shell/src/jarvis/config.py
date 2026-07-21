@@ -69,6 +69,8 @@ class VoiceConfig:
 
 @dataclass
 class BootConfig:
+    # Keep model offline by default so OS boot/debug does not depend on GGUF.
+    model_auto_start: bool = False
     # How long the readiness poller waits for the model before flagging it
     # degraded (the UI stays fully interactive the entire time).
     model_ready_timeout_s: int = 120

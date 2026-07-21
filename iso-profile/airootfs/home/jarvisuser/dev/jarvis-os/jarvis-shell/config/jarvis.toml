@@ -29,5 +29,6 @@ tts_voice = ""
 
 [boot]
 # The UI never blocks on these; they only tune the background readiness poller.
+model_auto_start = false
 model_ready_timeout_s = 120
 health_poll_interval_s = 1.0

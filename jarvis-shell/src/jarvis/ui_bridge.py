@@ -51,6 +51,7 @@ class JarvisBridge(QObject):
 
     # ── Signals (QML listens to these) ──────────────────────────────────
     modelStateChanged = pyqtSignal(str)
+    modelOnlineChanged = pyqtSignal(bool)
     voiceStateChanged = pyqtSignal(str)
     logAppended = pyqtSignal(str, str, str)  # source, level, message
     conversationAppended = pyqtSignal(str, str)  # role, text
@@ -64,7 +65,8 @@ class JarvisBridge(QObject):
         super().__init__(parent)
         self._runtime = Runtime()
         self._agent: ConversationAgent | None = None
-        self._model_state = ServiceState.INITIALIZING.value
+        self._model_state = self._runtime.readiness.state.value
+        self._model_online = self._runtime.readiness.desired_online
         self._voice_state = ServiceState.INITIALIZING.value
         self._pump_task: asyncio.Task | None = None
         self._clock_task: asyncio.Task | None = None
@@ -73,6 +75,10 @@ class JarvisBridge(QObject):
     @pyqtProperty(str, notify=modelStateChanged)
     def modelState(self) -> str:
         return self._model_state
+
+    @pyqtProperty(bool, notify=modelOnlineChanged)
+    def modelOnline(self) -> bool:
+        return self._model_online
 
     @pyqtProperty(str, notify=voiceStateChanged)
     def voiceState(self) -> str:
@@ -117,6 +123,13 @@ class JarvisBridge(QObject):
     def completeOnboarding(self) -> None:
         store.set_core_memory("onboarded", "1")
 
+    @pyqtSlot(bool)
+    def setModelOnline(self, enabled: bool) -> None:
+        self._runtime.readiness.set_desired_online(enabled)
+        if self._model_online != bool(enabled):
+            self._model_online = bool(enabled)
+            self.modelOnlineChanged.emit(self._model_online)
+
     # ── Internal: conversation handling ─────────────────────────────────
     async def _handle_user(self, text: str) -> None:
         self.streamingStarted.emit()
@@ -151,6 +164,10 @@ class JarvisBridge(QObject):
                     if topic == MODEL_STATUS and isinstance(payload, ServiceStatus):
                         self._model_state = payload.state.value
                         self.modelStateChanged.emit(payload.state.value)
+                        online = self._runtime.readiness.desired_online
+                        if self._model_online != online:
+                            self._model_online = online
+                            self.modelOnlineChanged.emit(online)
                     elif topic == VOICE_STATUS and isinstance(payload, ServiceStatus):
                         self._voice_state = payload.state.value
                         self.voiceStateChanged.emit(payload.state.value)

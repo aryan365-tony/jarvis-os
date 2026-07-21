@@ -20,6 +20,47 @@ You need ~25 GB free disk and 8 GB+ RAM.
 
 ---
 
+## Direct Start From Current Repo
+
+If you are already in this repository and just want to rebuild quickly:
+
+```bash
+cd ~/projects/jarvis-os
+
+# Optional speed/size knobs
+export BUILD_LOCAL_LLAMA_BACKEND=0        # skip local llama.cpp rebuild
+export INCLUDE_MODELS_IN_ISO=0            # keep ISO smaller, fetch model post-boot
+export SQUASHFS_ZSTD_LEVEL=15             # smaller ISO (higher = slower build)
+
+# Stage payload + build ISO
+./setup.sh
+cd iso-profile
+sudo mkarchiso -v -w ~/jarvis-work -o ~/jarvis-output .
+
+# Boot latest ISO
+ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
+env -u LD_LIBRARY_PATH -u GTK_PATH -u GDK_PIXBUF_MODULE_FILE -u LOCPATH qemu-system-x86_64 \
+  -enable-kvm -m 8G -smp 4 -cpu host \
+  -device virtio-vga-gl -display gtk,gl=on \
+  -cdrom "$ISO" -boot d
+```
+
+Useful overrides:
+
+- Force local backend rebuild even if an existing usable one is already bundled:
+
+```bash
+FORCE_REBUILD_LLAMA_BACKEND=1 ./setup.sh
+```
+
+- Fail fast if staged model cleanup cannot run (for fully deterministic ISO contents):
+
+```bash
+STRICT_STAGING_CLEAN=1 ./setup.sh
+```
+
+---
+
 ## Step 1 — Start the build container (host)
 
 Copy this whole block:
@@ -68,6 +109,16 @@ Your ISO is now on the host:
 ls -lh ~/jarvis-output
 ```
 
+Notes:
+
+- `setup.sh` builds and bundles the local CPU backend by default.
+- `setup.sh` now reuses an already usable bundled backend in `llama/cpu/` and avoids re-cloning/rebuilding unless forced.
+- If you need a faster/offline-safe setup path, skip local backend compilation:
+
+```bash
+BUILD_LOCAL_LLAMA_BACKEND=0 ./setup.sh
+```
+
 ---
 
 ## Step 3 — Boot it in a VM (host)
@@ -77,12 +128,14 @@ Copy this whole block (it auto-detects the ISO name):
 ```bash
 ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
 
-qemu-system-x86_64 \
+env -u LD_LIBRARY_PATH -u GTK_PATH -u GDK_PIXBUF_MODULE_FILE -u LOCPATH qemu-system-x86_64 \
   -enable-kvm \
   -m 8G -smp 4 -cpu host \
   -device virtio-vga-gl -display gtk,gl=on \
   -cdrom "$ISO" -boot d
 ```
+
+> If your environment is not Snap-based, you can drop the `env -u ...` prefix.
 
 > The `virtio-vga-gl` GPU is required — the `cage` compositor needs a real
 > graphics device or the screen stays black. No GL on your host? Swap the
@@ -109,16 +162,25 @@ At this point the OS is healthy even if no model is present.
 Model download is now intentionally **post-boot** so ISO builds stay small and
 boot/debug is not blocked by GGUF packaging.
 
+The shell now supports **any GGUF file** in
+`/home/jarvisuser/dev/jarvis-os/llama/models/`.
+It auto-detects models by `*.gguf` (no fixed filename required).
+
 Inside the running VM:
 
 ```bash
-# Option A: run helper directly
+# Primary path: click GO ONLINE in the top HUD.
+# Behavior:
+# 1) if any *.gguf already exists, it uses that model
+# 2) otherwise it downloads a default model, then starts llama-server
+
+# Optional CLI path A: run helper directly
 jarvis-model-download
 
-# Option B: run optional one-shot service (downloads + starts llama-server)
+# Optional CLI path B: one-shot service (downloads + starts llama-server)
 sudo systemctl start jarvis-model-download.service
 
-# Start backend manually if you used Option A
+# Start backend manually if you used CLI path A
 sudo systemctl start llama-server.service
 
 # Optional: auto-start llama-server on future boots
@@ -160,6 +222,10 @@ INCLUDE_MODELS_IN_ISO=1 ./setup.sh
 ```
 
 Without that env var, models are fetched after boot.
+`setup.sh` also clears previously staged `*.gguf` files during default builds,
+so models cannot be accidentally carried over into a later ISO.
+
+If you do opt in, any `*.gguf` files placed in `llama/models/` are embedded.
 
 ---
 
@@ -190,3 +256,6 @@ journalctl -u llama-server -b --no-pager
 ls -lh /home/jarvisuser/dev/jarvis-os/llama/models/
 jarvis-model-download
 ```
+
+If multiple `*.gguf` files are present, the runtime selects the first
+lexicographically sorted filename.

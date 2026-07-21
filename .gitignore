@@ -17,6 +17,8 @@ kernel/last-build.log
 # Regenerated ISO staging artifacts
 iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
 iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu/
+iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu
+iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu
 iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/*.so
 iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/*.so.*
 iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/libllama-*-impl.so

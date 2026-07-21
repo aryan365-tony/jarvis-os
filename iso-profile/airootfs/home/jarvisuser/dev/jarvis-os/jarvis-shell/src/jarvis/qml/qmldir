@@ -1,0 +1,11 @@
+# qmldir module definition for Jarvis QML components.
+module Jarvis
+singleton Theme 1.0 Theme.qml
+AiCore 1.0 components/AiCore.qml
+GlassPanel 1.0 components/GlassPanel.qml
+StatusHud 1.0 components/StatusHud.qml
+ChatOverlay 1.0 components/ChatOverlay.qml
+MessageBubble 1.0 components/MessageBubble.qml
+Composer 1.0 components/Composer.qml
+LogStream 1.0 components/LogStream.qml
+ParticleField 1.0 components/ParticleField.qml

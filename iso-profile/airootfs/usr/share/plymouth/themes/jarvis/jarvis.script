@@ -1,0 +1,31 @@
+# Jarvis-OS boot splash — self-contained (no external image assets required).
+# The previous version referenced a missing logo.png and an undefined
+# progress_bar variable, which made the theme script error out and show black.
+
+Window.SetBackgroundTopColor(0.04, 0.06, 0.08);
+Window.SetBackgroundBottomColor(0.02, 0.03, 0.04);
+
+title.image = Image.Text("JARVIS", 0.31, 0.84, 0.79);
+title.sprite = Sprite(title.image);
+title.sprite.SetX(Window.GetWidth() / 2 - title.image.GetWidth() / 2);
+title.sprite.SetY(Window.GetHeight() / 2 - title.image.GetHeight() / 2);
+
+# A gently pulsing subtitle acts as a lightweight activity indicator so the
+# splash always shows motion even before the shell takes over the VT.
+tick = 0;
+fun refresh_cb() {
+    tick++;
+    alpha = (Math.Sin(tick / 15) + 1) / 2 * 0.7 + 0.15;
+    status.image = Image.Text("initializing", 0.40, 0.70, 0.75, alpha);
+    status.sprite = Sprite(status.image);
+    status.sprite.SetX(Window.GetWidth() / 2 - status.image.GetWidth() / 2);
+    status.sprite.SetY(
+        Window.GetHeight() / 2 + title.image.GetHeight() / 2 + 12
+    );
+}
+Plymouth.SetRefreshFunction(refresh_cb);
+
+# Keep the boot-progress hook harmless if the daemon calls it.
+fun boot_progress_cb(duration, progress) {
+}
+Plymouth.SetBootProgressFunction(boot_progress_cb);

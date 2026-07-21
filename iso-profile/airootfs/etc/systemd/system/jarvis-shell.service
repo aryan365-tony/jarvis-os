@@ -1,0 +1,35 @@
+[Unit]
+Description=Jarvis Shell Interface
+# Silent/progressive boot: the shell appears immediately and gains model
+# capability later. llama-server is optional and may be started manually after
+# the model is downloaded.
+After=systemd-user-sessions.service seatd.service systemd-logind.service plymouth-quit-wait.service
+Requires=seatd.service
+# If the kiosk app crashes, allow tty1 getty to take over instead of leaving
+# the user on an empty VT.
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=jarvisuser
+# PAMName=login opens a full PAM/logind session. pam_systemd then creates
+# /run/user/<uid> and exports XDG_RUNTIME_DIR, which cage/Wayland require. Without
+# this the compositor cannot create its socket and the screen stays black.
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal+console
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+WorkingDirectory=/home/jarvisuser/dev/jarvis-os/jarvis-shell/src
+Environment=PYTHONPATH=/home/jarvisuser/dev/jarvis-os/jarvis-shell/src
+ExecStart=/bin/bash /home/jarvisuser/dev/jarvis-os/compositor/cage-jarvis.session
+Restart=always
+RestartSec=3
+CPUWeight=100
+MemoryHigh=16G
+
+[Install]
+WantedBy=graphical.target

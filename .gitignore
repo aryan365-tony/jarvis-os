@@ -1,0 +1,36 @@
+# ISO outputs and working directories
+*.iso
+jarvis-work/
+jarvis-out/
+
+# Large Language Models (keep source only, never stage to git)
+*.gguf
+llama/models/*
+!llama/models/.gitkeep
+
+# Compiled Binaries & build artifacts
+llama/cpu/server-cpu
+llama/gpu/server-gpu
+llama/vendor/
+kernel/last-build.log
+
+# ISO staging area (regenerated from setup.sh, never commit)
+iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
+iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# OS generated files
+.DS_Store
+Thumbs.db
+graphify-out/

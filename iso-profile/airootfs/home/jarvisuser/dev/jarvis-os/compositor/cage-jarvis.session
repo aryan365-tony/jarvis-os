@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -uo pipefail
+LOG="/home/jarvisuser/.local/share/jarvis/cage.log"
+mkdir -p "$(dirname "$LOG")"
+
+# Resolve the shell source dir relative to this script so `python -m jarvis.main`
+# always finds the package, regardless of how the session is launched.
+SELF="$(cd "$(dirname "$0")" && pwd)"
+SRC="$SELF/../jarvis-shell/src"
+export PYTHONPATH="$SRC${PYTHONPATH:+:$PYTHONPATH}"
+cd "$SRC" 2>/dev/null || cd "$SELF"
+
+# Qt/QML runs as a native Wayland client under cage — no terminal emulator needed.
+export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+
+# wlroots (cage's backend) must run under VMs and headless GPUs, not just real
+# hardware. Without these it aborts at start — leaving a permanent black screen
+# because the loop below just relaunches a compositor that can never come up:
+#   * WLR_RENDERER_ALLOW_SOFTWARE=1 lets wlroots fall back to the llvmpipe
+#     software GL renderer when no accelerated /dev/dri render node is usable
+#     (typical in QEMU/VirtualBox without 3D passthrough).
+#   * WLR_NO_HARDWARE_CURSORS=1 avoids the missing hardware-cursor plane that
+#     makes virtual GPUs (QXL/bochs/VMSVGA) hang or show a black/blank screen.
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export WLR_NO_HARDWARE_CURSORS=1
+
+attempt=0
+while true; do
+  # Escalating fallback: the first attempt uses hardware GL (fast on real
+  # machines). If the client crashes — the classic VM symptom is cage drawing a
+  # cursor while the Qt UI never appears because it can't get an OpenGL context —
+  # every later attempt forces a *fully software* stack so the shell always comes
+  # up instead of crash-looping on a black screen:
+  #   * WLR_RENDERER=pixman     -> wlroots renders without GL at all.
+  #   * QT_QUICK_BACKEND=software-> Qt Quick uses its software rasterizer (no GL).
+  #   * LIBGL/ GALLIUM llvmpipe  -> any remaining GL calls hit software mesa.
+  if [ "$attempt" -ge 1 ]; then
+    export WLR_RENDERER=pixman
+    export QT_QUICK_BACKEND=software
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export GALLIUM_DRIVER=llvmpipe
+  fi
+
+  cage -- python -m jarvis.main >>"$LOG" 2>&1
+  code=$?
+  echo "$(date -Is) jarvis.main exited code=$code (attempt=$attempt)" >> "$LOG"
+  if [ "$code" -eq 0 ]; then break; fi
+  attempt=$((attempt + 1))
+  sleep 2   # backoff before restart, avoid a tight crash loop pegging CPU
+done
+

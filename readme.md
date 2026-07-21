@@ -1,195 +1,268 @@
-# Jarvis OS Build and Run Guide
+# Jarvis OS Step-by-Step Build and Usage Guide
 
-This repository builds a bootable Arch-based live ISO with a Wayland shell and optional local llama backend.
+This guide is written for a new machine starting from an empty folder on the host. Follow the steps in order and you will end at a booted Jarvis OS ISO in QEMU.
 
-Two supported workflows:
+## What You Will Do
 
-1. Full clean build in a container (recommended for reproducibility).
-2. Direct build from your current local repo checkout.
+1. Create a clean workspace on the host.
+2. Install the minimum host tools.
+3. Clone this repository.
+4. Start a clean Arch build container.
+5. Run the staging script.
+6. Build the ISO with `mkarchiso`.
+7. Boot the ISO in QEMU.
+8. Verify the UI and backend behavior inside the VM.
 
-## Prerequisites
+## Host Requirements
 
-Host requirements:
+You need:
 
-- Linux host with KVM support
-- about 25 GB free disk
-- 8 GB or more RAM
+- a Linux host
+- KVM virtualization support
+- about 25 GB free disk space
+- at least 8 GB RAM
 
-Install host packages (Ubuntu or Debian example):
+Ubuntu or Debian host setup:
 
 ```bash
 sudo apt update
-sudo apt install -y podman qemu-system-x86 ovmf
+sudo apt install -y git podman qemu-system-x86 ovmf
 ```
 
-## Quick Start: Full Clean Build in Container
+Optional quick KVM check:
 
-Run these commands on the host:
+```bash
+ls /dev/kvm
+```
+
+If `/dev/kvm` exists, hardware acceleration is available.
+
+## Step 1: Create a Clean Working Folder
+
+Run this on the host:
+
+```bash
+mkdir -p ~/jarvis-build-from-scratch
+cd ~/jarvis-build-from-scratch
+```
+
+This folder can be completely empty before you start.
+
+## Step 2: Clone the Repository
+
+Run this on the host:
+
+```bash
+git clone https://github.com/aryan365-tony/jarvis-os.git
+cd jarvis-os
+```
+
+At this point you should see files like `setup.sh`, `iso-profile/`, `jarvis-shell/`, and `llama/`.
+
+## Step 3: Prepare Clean Output Paths
+
+Run this on the host:
+
+```bash
+rm -rf ~/jarvis-work ~/jarvis-output
+mkdir -p ~/jarvis-output
+```
+
+Purpose:
+
+- `~/jarvis-work` is the temporary ISO build workspace
+- `~/jarvis-output` is where the finished ISO will be written
+
+## Step 4: Start the Arch Build Container
+
+Run this on the host from inside the cloned repo:
 
 ```bash
 sudo podman rm -f jarvis-build 2>/dev/null || true
-sudo podman system prune -a --volumes -f
-rm -rf ~/jarvis-work ~/jarvis-output
-mkdir -p ~/jarvis-output
-cd ~/projects/jarvis-os
 
-sudo podman run --rm -it --privileged --network host --name jarvis-build \
+sudo podman run --rm -it \
+  --privileged \
+  --network host \
+  --name jarvis-build \
   -v "$(pwd)":/root/jarvis-os \
   -v ~/jarvis-output:/root/jarvis-out \
   archlinux:latest
 ```
 
-Inside the container:
+After this, your shell prompt changes and you are inside the container.
+
+## Step 5: Install Build Dependencies Inside the Container
+
+Run this inside the container:
 
 ```bash
 pacman -Sy --noconfirm
 pacman -S --noconfirm archiso base-devel git cmake rsync
+```
 
+These are the only required packages for the default build flow.
+
+## Step 6: Stage the Jarvis OS Payload
+
+Run this inside the container:
+
+```bash
 cd /root/jarvis-os
 chmod +x setup.sh
 ./setup.sh
+```
 
-cd iso-profile
+What `setup.sh` does:
+
+- stages the project into the Arch ISO filesystem tree
+- keeps integrated llama backend build enabled by default
+- reuses an already usable local backend when possible
+- avoids embedding GGUF models by default, so the ISO stays smaller
+
+## Step 7: Build the ISO
+
+Run this inside the container:
+
+```bash
+cd /root/jarvis-os/iso-profile
 mkarchiso -v -w /root/jarvis-work -o /root/jarvis-out .
+```
+
+When this finishes successfully, exit the container:
+
+```bash
 exit
 ```
 
-Back on the host, verify ISO output:
+## Step 8: Verify the ISO Was Created
+
+Run this on the host:
 
 ```bash
 ls -lh ~/jarvis-output/*.iso
 ```
 
-## Quick Start: Direct Build From Current Repo
+You should see one newly created ISO file.
 
-If your host already has build tools and you want a faster loop:
-
-```bash
-cd ~/projects/jarvis-os
-
-# Optional knobs
-export BUILD_LOCAL_LLAMA_BACKEND=1
-export INCLUDE_MODELS_IN_ISO=0
-export SQUASHFS_ZSTD_LEVEL=15
-
-./setup.sh
-cd iso-profile
-sudo mkarchiso -v -w ~/jarvis-work -o ~/jarvis-output .
-```
-
-Useful overrides:
+If the ISO is owned by root and you want normal user ownership:
 
 ```bash
-# Skip local backend compilation entirely
-BUILD_LOCAL_LLAMA_BACKEND=0 ./setup.sh
-
-# Force backend rebuild even if an existing bundled one is usable
-FORCE_REBUILD_LLAMA_BACKEND=1 ./setup.sh
-
-# Fail if staged model cleanup cannot complete
-STRICT_STAGING_CLEAN=1 ./setup.sh
+sudo chown "$USER:$USER" ~/jarvis-output/*.iso
 ```
 
-## Boot the Latest ISO in QEMU
+## Step 9: Boot the ISO in QEMU
 
-Run on host:
+Run this on the host:
 
 ```bash
 ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
 
 env -u LD_LIBRARY_PATH -u GTK_PATH -u GDK_PIXBUF_MODULE_FILE -u LOCPATH qemu-system-x86_64 \
   -enable-kvm \
-  -m 8G -smp 4 -cpu host \
-  -device virtio-vga-gl -display gtk,gl=on \
-  -cdrom "$ISO" -boot d
+  -m 8G \
+  -smp 4 \
+  -cpu host \
+  -device virtio-vga-gl \
+  -display gtk,gl=on \
+  -cdrom "$ISO" \
+  -boot d
 ```
 
-If your environment is not Snap-based, remove the env -u prefix.
+If your host is not running inside a Snap environment, you can usually remove the `env -u ...` prefix.
 
-For hosts without GL support, use:
+If OpenGL display fails on your host, use this fallback instead:
 
 ```bash
-qemu-system-x86_64 -enable-kvm -m 8G -smp 4 -cpu host -vga virtio -display sdl -cdrom "$ISO" -boot d
+ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
+
+qemu-system-x86_64 \
+  -enable-kvm \
+  -m 8G \
+  -smp 4 \
+  -cpu host \
+  -vga virtio \
+  -display sdl \
+  -cdrom "$ISO" \
+  -boot d
 ```
 
-VirtualBox note:
+## Step 10: Confirm the VM Reaches the Jarvis UI
 
-- Use Linux/Arch (64-bit)
-- Set RAM to 8192 MB and CPU to 4
-- Set Graphics Controller to VMSVGA
-- Enable 3D acceleration
+Expected result:
 
-## First Boot Checks Inside VM
+- the system boots fully
+- the Wayland UI appears
+- the shell is usable even if no model has been downloaded yet
 
-After UI appears, or from tty2 (Ctrl+Alt+F2):
+If you need a console inside the VM, use `Ctrl+Alt+F2`.
+
+Check shell service health inside the VM:
 
 ```bash
 systemctl status jarvis-shell
 ```
 
-Expected: shell service is active even when no model is installed yet.
+## Step 11: Use the Runtime After Boot
 
-## Model and Backend Runtime Behavior
+The UI can operate before any model is downloaded.
 
-The runtime supports any GGUF model in:
+Model directory inside the VM:
 
 ```text
 /home/jarvisuser/dev/jarvis-os/llama/models/
 ```
 
-GO ONLINE behavior:
+Runtime behavior when you press GO ONLINE:
 
-1. If one or more .gguf files already exist, one is auto-selected.
-2. If no model exists, default model download is triggered.
-3. llama-server is started after model availability checks pass.
+1. If any `.gguf` model already exists, it is selected automatically.
+2. If no model exists, the default model is downloaded.
+3. `llama-server` is started after model validation succeeds.
 
-Manual runtime commands inside VM:
+Manual commands inside the VM:
 
 ```bash
-# Download model helper
+# Download a model
 jarvis-model-download
 
-# One-shot service: download then start backend
+# Download model and start the backend service
 sudo systemctl start jarvis-model-download.service
 
 # Start backend manually
 sudo systemctl start llama-server.service
 
-# Enable backend on future boots
+# Make backend start automatically on future boots
 sudo systemctl enable llama-server.service
 
-# Health checks
+# Verify backend health
 systemctl status llama-server
 curl http://127.0.0.1:8080/health
 ```
 
-## ISO Size and Build Performance
+## Step 12: Optional Build Controls
 
-Default behavior keeps ISOs smaller by not embedding models.
+Default behavior is the recommended path. Use overrides only when you need them.
 
-To embed models in ISO intentionally:
+Inside the repo, before running `./setup.sh`:
 
 ```bash
+# Skip local llama backend compilation
+BUILD_LOCAL_LLAMA_BACKEND=0 ./setup.sh
+
+# Force local backend rebuild even if an existing one is usable
+FORCE_REBUILD_LLAMA_BACKEND=1 ./setup.sh
+
+# Embed local GGUF models into the ISO
 INCLUDE_MODELS_IN_ISO=1 ./setup.sh
+
+# Fail if staged cleanup cannot complete
+STRICT_STAGING_CLEAN=1 ./setup.sh
 ```
 
-When model embedding is disabled, setup.sh clears previously staged .gguf files to prevent accidental carryover between builds.
+## Step 13: Troubleshooting
 
-## Write ISO to USB
+### Black Screen or Frozen UI
 
-Only do this after VM validation:
-
-```bash
-lsblk
-ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
-sudo dd if="$ISO" of=/dev/sdX bs=4M status=progress oflag=sync
-```
-
-Replace /dev/sdX with the correct USB target.
-
-## Troubleshooting
-
-Black screen or frozen UI:
+Inside the VM console:
 
 ```bash
 journalctl -u jarvis-shell -b --no-pager
@@ -197,9 +270,11 @@ cat /home/jarvisuser/.local/share/jarvis/cage.log
 ls -l /dev/dri/
 ```
 
-If /dev/dri is empty, VM GPU passthrough config is missing. Use virtio-vga-gl in QEMU or VMSVGA + 3D in VirtualBox.
+If `/dev/dri/` is empty, the VM does not have a usable virtual GPU. Use `virtio-vga-gl` in QEMU or enable `VMSVGA` plus 3D acceleration in VirtualBox.
 
-llama-server issues:
+### llama-server Does Not Start
+
+Inside the VM:
 
 ```bash
 journalctl -u llama-server -b --no-pager
@@ -207,8 +282,68 @@ ls -lh /home/jarvisuser/dev/jarvis-os/llama/models/
 jarvis-model-download
 ```
 
-ISO ownership fix on host:
+### Build Artifacts Use Too Much Disk
+
+On the host:
 
 ```bash
-sudo chown "$USER:$USER" ~/jarvis-output/*.iso
+rm -rf ~/jarvis-work
+sudo podman system prune -a -f
+```
+
+## Step 14: Optional USB Write After VM Validation
+
+Only do this after the ISO works in QEMU.
+
+On the host:
+
+```bash
+lsblk
+ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
+sudo dd if="$ISO" of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+Replace `/dev/sdX` with the correct target device.
+
+## One-Block Summary
+
+If you already understand the process and just want the shortest working path:
+
+```bash
+mkdir -p ~/jarvis-build-from-scratch
+cd ~/jarvis-build-from-scratch
+sudo apt update
+sudo apt install -y git podman qemu-system-x86 ovmf
+git clone https://github.com/aryan365-tony/jarvis-os.git
+cd jarvis-os
+rm -rf ~/jarvis-work ~/jarvis-output
+mkdir -p ~/jarvis-output
+sudo podman rm -f jarvis-build 2>/dev/null || true
+sudo podman run --rm -it --privileged --network host --name jarvis-build \
+  -v "$(pwd)":/root/jarvis-os \
+  -v ~/jarvis-output:/root/jarvis-out \
+  archlinux:latest
+```
+
+Then inside the container:
+
+```bash
+pacman -Sy --noconfirm
+pacman -S --noconfirm archiso base-devel git cmake rsync
+cd /root/jarvis-os
+chmod +x setup.sh
+./setup.sh
+cd /root/jarvis-os/iso-profile
+mkarchiso -v -w /root/jarvis-work -o /root/jarvis-out .
+exit
+```
+
+Then back on the host:
+
+```bash
+ISO=$(ls -t ~/jarvis-output/*.iso | head -1)
+env -u LD_LIBRARY_PATH -u GTK_PATH -u GDK_PIXBUF_MODULE_FILE -u LOCPATH qemu-system-x86_64 \
+  -enable-kvm -m 8G -smp 4 -cpu host \
+  -device virtio-vga-gl -display gtk,gl=on \
+  -cdrom "$ISO" -boot d
 ```

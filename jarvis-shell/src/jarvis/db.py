@@ -11,6 +11,7 @@ table exists before the first write.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -36,18 +37,68 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 
 class Database:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, key: str | None = None) -> None:
         self._path = path
+        self._key = key
         self._lock = threading.RLock()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False + explicit lock lets tool threads log safely.
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn = self._connect(path, key)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
+            # WAL keeps readers non-blocking and, crucially, survives a hard
+            # power loss: an interrupted write leaves the main DB intact and the
+            # WAL is replayed/rolled back cleanly on the next open (Phase 1
+            # crash-durability requirement). synchronous=NORMAL is the correct
+            # pairing with WAL — durable across app crashes, and across power
+            # loss the DB stays consistent (at most the last uncommitted txn is
+            # lost, never corrupted).
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
+            # A busy timeout avoids spurious "database is locked" under the
+            # multi-thread tool executor.
+            self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.executescript(_AUDIT_DDL)
             self._conn.commit()
+        # The memory DB holds full conversation history and now runs with
+        # reduced human oversight; lock it down to owner-only at rest (Phase 1).
+        self._restrict_permissions()
+
+    @staticmethod
+    def _connect(path: str, key: str | None) -> sqlite3.Connection:
+        """Open the DB, transparently using SQLCipher when a key is supplied.
+
+        check_same_thread=False + an explicit RLock lets tool worker threads log
+        to the audit table safely. When ``key`` is set and the pysqlcipher3
+        driver is installed, the file is opened as an encrypted SQLCipher DB;
+        otherwise we fall back to stdlib sqlite3 (plaintext file, still 0600 and
+        typically on a LUKS-encrypted @home).
+        """
+        if key:
+            try:
+                from pysqlcipher3 import dbapi2 as sqlcipher  # type: ignore
+
+                conn = sqlcipher.connect(path, check_same_thread=False)
+                # PRAGMA key must be the very first statement on the connection.
+                conn.execute(f"PRAGMA key = \"x'{key}'\"")
+                return conn
+            except ModuleNotFoundError:
+                import logging
+
+                logging.getLogger("jarvis.db").warning(
+                    "encrypt_at_rest requested but pysqlcipher3 is not installed; "
+                    "falling back to plaintext DB (rely on LUKS @home + 0600 perms)"
+                )
+        return sqlite3.connect(path, check_same_thread=False)
+
+    def _restrict_permissions(self) -> None:
+        """chmod the DB (and WAL/SHM sidecars) to 0600 — owner read/write only."""
+        for suffix in ("", "-wal", "-shm"):
+            p = self._path + suffix
+            try:
+                if os.path.exists(p):
+                    os.chmod(p, 0o600)
+            except OSError:  # best effort; never block startup on perms
+                pass
 
     @property
     def lock(self) -> threading.RLock:
@@ -91,8 +142,32 @@ class Database:
         with self._lock:
             return list(self._conn.execute(sql, params))
 
+    def checkpoint(self) -> None:
+        """Force a full WAL checkpoint and truncate the WAL file.
+
+        Called by maintenance (``ops/cleanup-space.sh`` → ``jarvis db checkpoint``)
+        so the WAL does not grow unbounded and every committed change is folded
+        back into the main database file.
+        """
+        with self._lock:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.commit()
+
+    def vacuum(self) -> None:
+        """Compact the database, reclaiming space from deleted rows."""
+        with self._lock:
+            # VACUUM cannot run inside a transaction; commit any pending work.
+            self._conn.commit()
+            self._conn.execute("VACUUM")
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
+            # Fold the WAL back before closing so a subsequent open is clean.
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
             self._conn.close()
 
 
@@ -106,9 +181,39 @@ def get_db() -> Database:
     if _db is None:
         from .config import get_config
 
-        _db = Database(get_config().memory.db_path)
+        cfg = get_config().memory
+        key = _load_or_create_key(cfg.key_path) if cfg.encrypt_at_rest else None
+        _db = Database(cfg.db_path, key=key)
         _db.migrate()
     return _db
+
+
+def _load_or_create_key(key_path: str) -> str:
+    """Return a hex key for SQLCipher, generating a 0600 keyfile if absent.
+
+    NOTE: a key stored on the same disk protects against offline theft of the DB
+    file alone, not against an attacker with full root on a running system. For
+    strong at-rest protection, pair this with LUKS on @home (installer
+    ``ENCRYPT_HOME=1``). Kept dependency-free (os.urandom) so it works offline.
+    """
+    p = Path(key_path)
+    try:
+        if p.exists():
+            return p.read_text().strip()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        key = os.urandom(32).hex()
+        p.write_text(key)
+        os.chmod(p, 0o600)
+        return key
+    except OSError:
+        # If we cannot persist a stable key, fall back to no encryption rather
+        # than locking the user out of their own history.
+        import logging
+
+        logging.getLogger("jarvis.db").error(
+            "could not read/create memory key at %s; disabling encryption", key_path
+        )
+        return ""
 
 
 def set_db(db: Database) -> None:

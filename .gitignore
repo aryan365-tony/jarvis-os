@@ -1,24 +1,32 @@
-# ISO outputs and working directories
+# Build outputs
 *.iso
 jarvis-work/
 jarvis-out/
 
-# Large Language Models
+# Models (keep placeholder only)
 *.gguf
 llama/models/*
 !llama/models/.gitkeep
 
-# Compiled Binaries
-llama/cpu/server-cpu
-llama/gpu/server-gpu
+# Local backend build artifacts
+llama/cpu/
+llama/gpu/
 llama/vendor/
 kernel/last-build.log
+
+# Regenerated ISO staging artifacts
+# setup.sh rsyncs the whole repo into the live airootfs and stages the compiled
+# llama backend under /usr/local/lib. These are fully regenerated at build time
+# and must never be committed.
+iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/
+iso-profile/airootfs/usr/local/lib/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
 .Python
 env/
 venv/
@@ -26,6 +34,7 @@ venv/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# OS generated files
+# Misc
 .DS_Store
 Thumbs.db
+graphify-out/

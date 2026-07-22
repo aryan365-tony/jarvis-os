@@ -39,14 +39,28 @@ class LLMConfig:
 class MemoryConfig:
     db_path: str = "/home/jarvisuser/.local/share/jarvis/memory.sqlite3"
     core_memory_max_tokens: int = 1200
+    # At-rest encryption (Phase 1). The conversation DB holds full history and
+    # runs with reduced human oversight. Two layers are supported:
+    #   * ``encrypt_at_rest`` -> use SQLCipher when the pysqlcipher3 driver is
+    #     present, keyed from ``key_path`` (auto-generated 0600 if missing).
+    #   * filesystem LUKS on @home (installer ``ENCRYPT_HOME=1``) as the default,
+    #     dependency-free option for the offline image.
+    # Regardless of layer, the DB file is always chmod 0600, owner-only.
+    encrypt_at_rest: bool = False
+    key_path: str = "/var/lib/jarvis/memory.key"
 
 
 @dataclass
 class PolicyConfig:
-    network_allowlist_path: str = "config/network_allowlist.txt"
+    # Phase 2: the network allowlist was removed — the image is offline by
+    # design (no egress path exists), so an allowlist was dead configuration.
     irreversible_requires_confirm: bool = True
-    max_tool_calls_per_turn: int = 6
+    # Raised for the larger Phase 2 tool surface but still a hard ceiling; the
+    # registry additionally enforces its own PER_TURN_TOOL_BUDGET.
+    max_tool_calls_per_turn: int = 12
     max_turns_per_session_task: int = 25
+    # High-tier fs mutations are confined here; anything inside runs low-tier.
+    fs_scratch_dir: str = "/home/jarvisuser/scratch"
 
 
 @dataclass
@@ -69,6 +83,8 @@ class VoiceConfig:
 
 @dataclass
 class BootConfig:
+    # Keep model offline by default so OS boot/debug does not depend on GGUF.
+    model_auto_start: bool = False
     # How long the readiness poller waits for the model before flagging it
     # degraded (the UI stays fully interactive the entire time).
     model_ready_timeout_s: int = 120

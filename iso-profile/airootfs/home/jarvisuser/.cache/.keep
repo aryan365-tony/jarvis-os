@@ -1,0 +1,2 @@
+# Placeholder so ~/.cache exists for Qt runtime caches under a read-only /home
+# (ProtectHome=read-only + ReadWritePaths in systemd/jarvis-shell.service).

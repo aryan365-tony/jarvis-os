@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec /home/jarvisuser/dev/jarvis-os/llama/download-model.sh "$@"

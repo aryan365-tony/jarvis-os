@@ -1,0 +1,2 @@
+# Placeholder so this directory exists in the image and can be bound
+# read-write by systemd ReadWritePaths= (see systemd/jarvis-shell.service).

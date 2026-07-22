@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# =============================================================================
+# jarvis-fsop — the filesystem privilege boundary for the Jarvis agent
+# =============================================================================
+#
+# WHY THIS EXISTS
+# ---------------
+# The agent runs as the unprivileged user `jarvisuser`. For filesystem changes
+# OUTSIDE its own home it needs root, but we must NEVER give it a general root
+# shell. The sudoers drop-in grants exactly:
+#
+#     jarvisuser ALL=(root) NOPASSWD: /usr/local/bin/jarvis-fsop
+#
+# so this script — and ONLY this script — is the code that runs as root on the
+# agent's behalf. Everything the agent can do to the system filesystem is the
+# union of the verbs below, constrained by the denylist. Keep this file small,
+# auditable, and boring on purpose. Do not add a "run arbitrary command" verb.
+#
+# CONTRACT
+# --------
+#   jarvis-fsop <verb> <args...>
+#   verbs:  write <path>            (content on stdin)
+#           mkdir <path>
+#           rm    <path>            (single path; recursive only for dirs)
+#           chmod <mode> <path>
+#           chown <owner[:group]> <path>
+#           copy  <src> <dst>
+#           move  <src> <dst>
+#           cat   <path>            (read; convenience for system files)
+#
+# Every invocation is logged to journald (tag: jarvis-fsop) BEFORE acting, so
+# the audit trail exists even if the operation later fails or the caller lies.
+# =============================================================================
+
+set -euo pipefail
+
+log() { logger -t jarvis-fsop -- "$*" 2>/dev/null || true; }
+die() { log "DENY: $*"; echo "jarvis-fsop: $*" >&2; exit 2; }
+
+# --- Hard denylist -----------------------------------------------------------
+# Absolute paths that must never be modified through this helper, because doing
+# so could destroy the security model or brick the boot. realpath-canonicalised
+# so ".." / symlink tricks cannot slip past. This is defence-in-depth: the
+# agent's model may be wrong or adversarial; the boundary must not depend on it.
+readonly PROTECTED_PREFIXES=(
+  "/boot"
+  "/dev"
+  "/proc"
+  "/sys"
+  "/run/systemd"
+  "/etc/sudoers"
+  "/etc/sudoers.d"
+  "/etc/shadow"
+  "/etc/gshadow"
+  "/etc/passwd"
+  "/etc/group"
+  "/usr/local/bin/jarvis-fsop"
+  "/usr/local/bin/jarvis-install"
+  "/var/lib/jarvis/audit"          # the hash-chained audit store
+)
+
+# Canonicalise a path WITHOUT requiring it to exist (for write/mkdir targets).
+canon() {
+  local p="$1"
+  # realpath -m canonicalises even non-existent paths (resolves .. and symlinks
+  # of existing components).
+  realpath -m -- "$p"
+}
+
+guard_path() {
+  local raw="$1" p
+  p="$(canon "$raw")"
+  [[ "$p" == "/" ]] && die "refusing to operate on / (path=$raw)"
+  local pre
+  for pre in "${PROTECTED_PREFIXES[@]}"; do
+    if [[ "$p" == "$pre" || "$p" == "$pre"/* ]]; then
+      die "protected path: $p (matched $pre)"
+    fi
+  done
+  printf '%s' "$p"
+}
+
+[[ $# -ge 1 ]] || die "no verb given"
+verb="$1"; shift
+
+case "$verb" in
+  write)
+    [[ $# -eq 1 ]] || die "write takes exactly <path>"
+    p="$(guard_path "$1")"
+    log "write $p (uid=${SUDO_UID:-?})"
+    # Content comes from stdin; never from argv (avoids arg-length/expansion).
+    tmp="$(mktemp)"
+    cat > "$tmp"
+    install -m 0644 -- "$tmp" "$p"
+    rm -f -- "$tmp"
+    ;;
+  mkdir)
+    [[ $# -eq 1 ]] || die "mkdir takes exactly <path>"
+    p="$(guard_path "$1")"
+    log "mkdir $p"
+    mkdir -p -- "$p"
+    ;;
+  rm)
+    [[ $# -eq 1 ]] || die "rm takes exactly <path>"
+    p="$(guard_path "$1")"
+    [[ -e "$p" || -L "$p" ]] || die "rm: no such path: $p"
+    log "rm $p"
+    rm -rf -- "$p"
+    ;;
+  chmod)
+    [[ $# -eq 2 ]] || die "chmod takes <mode> <path>"
+    [[ "$1" =~ ^[0-7]{3,4}$ ]] || die "chmod: mode must be octal"
+    p="$(guard_path "$2")"
+    log "chmod $1 $p"
+    chmod -- "$1" "$p"
+    ;;
+  chown)
+    [[ $# -eq 2 ]] || die "chown takes <owner[:group]> <path>"
+    [[ "$1" =~ ^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$ ]] || die "chown: bad spec"
+    p="$(guard_path "$2")"
+    log "chown $1 $p"
+    chown -- "$1" "$p"
+    ;;
+  copy)
+    [[ $# -eq 2 ]] || die "copy takes <src> <dst>"
+    s="$(canon "$1")"; [[ -e "$s" ]] || die "copy: no such src: $s"
+    d="$(guard_path "$2")"
+    log "copy $s -> $d"
+    cp -a -- "$s" "$d"
+    ;;
+  move)
+    [[ $# -eq 2 ]] || die "move takes <src> <dst>"
+    s="$(guard_path "$1")"; [[ -e "$s" ]] || die "move: no such src: $s"
+    d="$(guard_path "$2")"
+    log "move $s -> $d"
+    mv -- "$s" "$d"
+    ;;
+  cat)
+    [[ $# -eq 1 ]] || die "cat takes exactly <path>"
+    p="$(canon "$1")"
+    # Reading is less dangerous, but still refuse the secret files.
+    for pre in "/etc/shadow" "/etc/gshadow"; do
+      [[ "$p" == "$pre" ]] && die "refusing to read $p"
+    done
+    log "cat $p"
+    cat -- "$p"
+    ;;
+  *)
+    die "unknown verb: $verb"
+    ;;
+esac
+
+log "OK: $verb"
+exit 0

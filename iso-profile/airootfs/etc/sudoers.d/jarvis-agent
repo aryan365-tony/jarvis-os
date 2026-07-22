@@ -1,0 +1,21 @@
+# /etc/sudoers.d/jarvis-agent
+#
+# Scoped, passwordless sudo for the autonomous agent user (jarvisuser).
+#
+# HARD BOUNDARY (Jarvis-OS Phase 0): this file is the *entire* privilege surface
+# granted to the agent. It must NEVER be widened to `NOPASSWD: ALL`. Every
+# root-capable action the agent can take flows through exactly one of the five
+# commands below:
+#   * pacman        - package install/remove/upgrade   (tools/pkg_manage.py, Phase 2)
+#   * systemctl     - unit start/stop/restart/enable    (tools/svc_control.py, Phase 2)
+#   * btrfs         - subvolume/snapshot primitives      (snapshot safety net, Phase 3)
+#   * snapper       - pre-action snapshots + rollback    (snapshot safety net, Phase 3)
+#   * jarvis-fsop   - the ONLY root filesystem-mutation helper (tools/fs_ops.py, Phase 2)
+#
+# jarvis-fsop is a small, auditable root helper installed at /usr/local/bin
+# in Phase 2; the sudoers entry is declared here so the boundary is fixed from
+# the start. Until that script exists, the entry is inert (the target simply
+# does not exist yet).
+#
+# Validate after any edit with: visudo -cf /etc/sudoers.d/jarvis-agent
+jarvisuser ALL=(root) NOPASSWD: /usr/bin/pacman, /usr/bin/systemctl, /usr/bin/btrfs, /usr/bin/snapper, /usr/local/bin/jarvis-fsop

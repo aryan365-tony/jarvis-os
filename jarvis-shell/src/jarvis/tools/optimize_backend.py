@@ -5,7 +5,7 @@ from .registry import register
 
 @register(
     "optimize_backend",
-    risk="irreversible",
+    risk="high",
     description=(
         "Detect the GPU and, if supported, build and switch the LLM backend to a "
         "hardware-accelerated build, then restart the inference server."

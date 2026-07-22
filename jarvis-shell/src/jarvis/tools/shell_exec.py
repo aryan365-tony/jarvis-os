@@ -4,7 +4,7 @@ from .registry import register
 
 @register(
     "shell_exec",
-    risk="irreversible",
+    risk="high",
     description="Run a shell command on the local machine and return combined output.",
     parameters={
         "type": "object",

@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+#
+# jarvis-install - install Jarvis-OS from the live ISO onto a btrfs disk.
+#
+# Phase 0 (Base OS Hardening & Boot Foundation) requires a *persistent* btrfs
+# root with the subvolume layout @ / @home / @snapshots / @var_log so that the
+# Phase 3 snapshot safety net (snapper pre-action snapshots + rollback) has
+# something real to operate on. A live squashfs medium cannot provide that, so
+# Jarvis-OS is installed onto a disk by this script.
+#
+# The installer is intentionally an offline, rsync-from-live clone: it copies
+# the already-staged airootfs payload (shell + baked GGUF + backend) onto the
+# target and fixes up the boot path. No network access is required or performed.
+#
+# Usage:
+#   jarvis-install /dev/vda            # interactive confirm before wiping
+#   jarvis-install --yes /dev/vda      # non-interactive (test harness)
+#
+set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# Configuration / constants
+# ----------------------------------------------------------------------------
+EFI_SIZE_MIB=550
+ROOT_LABEL="JARVIS_ROOT"
+EFI_LABEL="JARVIS_EFI"
+BTRFS_MOUNT_OPTS="compress=zstd:1,noatime,ssd,space_cache=v2"
+TARGET="/mnt/jarvis-install"
+
+ASSUME_YES=0
+DISK=""
+
+log()  { printf '%s %s\n' "$(date -Is)" "$*"; }
+die()  { printf '%s ERROR: %s\n' "$(date -Is)" "$*" >&2; exit 1; }
+
+# ----------------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --yes|-y) ASSUME_YES=1; shift ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *)
+      [[ -z "$DISK" ]] || die "only one target disk may be given"
+      DISK="$1"; shift ;;
+  esac
+done
+
+[[ -n "$DISK" ]] || die "no target disk specified (e.g. /dev/vda). See --help."
+[[ $EUID -eq 0 ]] || die "must run as root"
+[[ -b "$DISK" ]]  || die "$DISK is not a block device"
+
+# Refuse to install onto the device backing the live medium.
+if findmnt -n -o SOURCE / | grep -q "$DISK"; then
+  die "$DISK appears to back the running live system; refusing"
+fi
+
+for tool in sgdisk mkfs.fat mkfs.btrfs btrfs rsync genfstab arch-chroot snapper bootctl; do
+  command -v "$tool" >/dev/null 2>&1 || die "required tool missing on live ISO: $tool"
+done
+
+# ----------------------------------------------------------------------------
+# Confirmation
+# ----------------------------------------------------------------------------
+log "Target disk: $DISK"
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS "$DISK" || true
+if [[ "$ASSUME_YES" -ne 1 ]]; then
+  read -r -p "This ERASES all data on $DISK. Type 'YES' to continue: " confirm
+  [[ "$confirm" == "YES" ]] || die "aborted by user"
+fi
+
+# ----------------------------------------------------------------------------
+# Cleanup trap - always unmount the target tree on exit.
+# ----------------------------------------------------------------------------
+cleanup() {
+  set +e
+  umount -R "$TARGET" 2>/dev/null
+  rmdir "$TARGET" 2>/dev/null
+}
+trap cleanup EXIT
+
+# ----------------------------------------------------------------------------
+# 1. Partition: GPT with an EFI System Partition + a btrfs data partition.
+# ----------------------------------------------------------------------------
+log "Partitioning $DISK (GPT: ${EFI_SIZE_MIB}MiB ESP + btrfs remainder)"
+sgdisk --zap-all "$DISK"
+sgdisk --new=1:0:+${EFI_SIZE_MIB}MiB --typecode=1:ef00 --change-name=1:"$EFI_LABEL" "$DISK"
+sgdisk --new=2:0:0                   --typecode=2:8300 --change-name=2:"$ROOT_LABEL" "$DISK"
+partprobe "$DISK" 2>/dev/null || true
+sleep 1
+
+# Resolve partition device names (handles /dev/sda2 vs /dev/nvme0n1p2 vs /dev/vda2).
+if [[ "$DISK" =~ [0-9]$ ]]; then
+  EFI_PART="${DISK}p1"; ROOT_PART="${DISK}p2"
+else
+  EFI_PART="${DISK}1";  ROOT_PART="${DISK}2"
+fi
+[[ -b "$EFI_PART"  ]] || die "expected EFI partition $EFI_PART not found"
+[[ -b "$ROOT_PART" ]] || die "expected root partition $ROOT_PART not found"
+
+# ----------------------------------------------------------------------------
+# 2. Filesystems.
+# ----------------------------------------------------------------------------
+log "Creating filesystems"
+mkfs.fat -F32 -n "$EFI_LABEL" "$EFI_PART"
+mkfs.btrfs -f -L "$ROOT_LABEL" "$ROOT_PART"
+
+# ----------------------------------------------------------------------------
+# 3. Subvolume layout: @ / @home / @snapshots / @var_log  (Phase 0 requirement).
+# ----------------------------------------------------------------------------
+log "Creating btrfs subvolumes @ @home @snapshots @var_log"
+mkdir -p "$TARGET"
+mount "$ROOT_PART" "$TARGET"
+btrfs subvolume create "$TARGET/@"
+btrfs subvolume create "$TARGET/@home"
+btrfs subvolume create "$TARGET/@snapshots"
+btrfs subvolume create "$TARGET/@var_log"
+umount "$TARGET"
+
+# ----------------------------------------------------------------------------
+# 4. Mount the target tree. NOTE: @snapshots is deliberately mounted LAST and
+#    only after snapper has created its config (see step 9), because
+#    `snapper create-config` insists on creating the /.snapshots subvol itself.
+# ----------------------------------------------------------------------------
+log "Mounting target subvolumes"
+mount -o "${BTRFS_MOUNT_OPTS},subvol=@"        "$ROOT_PART" "$TARGET"
+mkdir -p "$TARGET/home" "$TARGET/var/log" "$TARGET/boot" "$TARGET/.snapshots"
+mount -o "${BTRFS_MOUNT_OPTS},subvol=@home"    "$ROOT_PART" "$TARGET/home"
+mount -o "${BTRFS_MOUNT_OPTS},subvol=@var_log" "$ROOT_PART" "$TARGET/var/log"
+mount "$EFI_PART" "$TARGET/boot"
+
+# ----------------------------------------------------------------------------
+# 5. Clone the live rootfs onto the target (offline, no pacstrap needed).
+# ----------------------------------------------------------------------------
+log "Cloning live root filesystem onto target (this can take a while)"
+rsync -aHAXx --info=progress2 \
+  --exclude='/dev/*' \
+  --exclude='/proc/*' \
+  --exclude='/sys/*' \
+  --exclude='/tmp/*' \
+  --exclude='/run/*' \
+  --exclude='/mnt/*' \
+  --exclude='/media/*' \
+  --exclude='/lost+found' \
+  --exclude='/var/log/*' \
+  --exclude='/etc/mkinitcpio.conf.d/archiso.conf' \
+  --exclude='/etc/mkinitcpio.d/linux.preset' \
+  / "$TARGET/"
+
+# ----------------------------------------------------------------------------
+# 6. Replace archiso-specific boot config with a normal installed boot path.
+# ----------------------------------------------------------------------------
+log "Writing installed-system mkinitcpio configuration"
+install -d "$TARGET/etc/mkinitcpio.d"
+cat > "$TARGET/etc/mkinitcpio.d/linux.preset" <<'PRESET'
+# mkinitcpio preset for the installed Jarvis-OS system (btrfs root).
+ALL_kver="/boot/vmlinuz-linux"
+PRESETS=('default')
+default_image="/boot/initramfs-linux.img"
+PRESET
+cat > "$TARGET/etc/mkinitcpio.conf.d/jarvis.conf" <<'MKI'
+# Installed Jarvis-OS: btrfs root, no archiso/PXE/loop hooks.
+HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
+MODULES=(btrfs)
+MKI
+
+# ----------------------------------------------------------------------------
+# 7. fstab.
+# ----------------------------------------------------------------------------
+log "Generating /etc/fstab"
+genfstab -U "$TARGET" > "$TARGET/etc/fstab"
+# @snapshots is not mounted yet; add its entry explicitly so it survives reboot.
+ROOT_UUID="$(blkid -s UUID -o value "$ROOT_PART")"
+{
+  echo "# root snapshot store (@snapshots) for snapper/Phase 3 safety net"
+  echo "UUID=$ROOT_UUID  /.snapshots  btrfs  ${BTRFS_MOUNT_OPTS},subvol=@snapshots  0 0"
+} >> "$TARGET/etc/fstab"
+
+# ----------------------------------------------------------------------------
+# 8. Chroot finalization: initramfs, bootloader, snapper.
+# ----------------------------------------------------------------------------
+KERNEL_CMDLINE="root=UUID=${ROOT_UUID} rootflags=subvol=@ rw quiet"
+
+log "Finalizing inside chroot (initramfs, bootloader, snapper)"
+arch-chroot "$TARGET" /usr/bin/env \
+  ROOT_UUID="$ROOT_UUID" \
+  KERNEL_CMDLINE="$KERNEL_CMDLINE" \
+  BTRFS_MOUNT_OPTS="$BTRFS_MOUNT_OPTS" \
+  bash -euo pipefail <<'CHROOT'
+# --- initramfs -------------------------------------------------------------
+mkinitcpio -P
+
+# --- systemd-boot ----------------------------------------------------------
+bootctl install
+mkdir -p /boot/loader/entries
+cat > /boot/loader/loader.conf <<LOADER
+default jarvis.conf
+timeout 1
+console-mode max
+editor no
+LOADER
+
+UCODE=""
+[[ -f /boot/amd-ucode.img ]]   && UCODE="initrd  /amd-ucode.img"
+[[ -f /boot/intel-ucode.img ]] && UCODE="initrd  /intel-ucode.img"
+
+cat > /boot/loader/entries/jarvis.conf <<ENTRY
+title   Jarvis-OS
+linux   /vmlinuz-linux
+${UCODE}
+initrd  /initramfs-linux.img
+options ${KERNEL_CMDLINE}
+ENTRY
+
+# --- snapper (@ / and @home) ----------------------------------------------
+# snapper create-config wants to create the /.snapshots subvol itself, so run it
+# before we mount our dedicated @snapshots there. We then replace the nested
+# subvol it made with the top-level @snapshots subvol from the Phase 0 layout.
+if [[ ! -f /etc/snapper/configs/root ]]; then
+  snapper --no-dbus -c root create-config /
+  # Drop the nested .snapshots subvol snapper just created; @snapshots (mounted
+  # via fstab) becomes the real store.
+  if btrfs subvolume show /.snapshots >/dev/null 2>&1; then
+    btrfs subvolume delete /.snapshots || true
+  fi
+  mkdir -p /.snapshots
+fi
+if [[ ! -f /etc/snapper/configs/home ]]; then
+  snapper --no-dbus -c home create-config /home
+fi
+
+# Let the agent user read/list snapshots without full root; creation/rollback
+# still goes through the scoped sudo allowlist (snapper).
+sed -i 's/^ALLOW_USERS=.*/ALLOW_USERS="jarvisuser"/' /etc/snapper/configs/root  || true
+sed -i 's/^ALLOW_USERS=.*/ALLOW_USERS="jarvisuser"/' /etc/snapper/configs/home  || true
+# Register both configs so snapper units act on them.
+if [[ -f /etc/conf.d/snapper ]]; then
+  sed -i 's/^SNAPPER_CONFIGS=.*/SNAPPER_CONFIGS="root home"/' /etc/conf.d/snapper || true
+else
+  echo 'SNAPPER_CONFIGS="root home"' > /etc/conf.d/snapper
+fi
+
+# Enable periodic cleanup; timeline auto-snapshots are left to Phase 3 policy.
+systemctl enable snapper-cleanup.timer || true
+
+# Remove live-only autologin/archiso automation if present on the target.
+rm -f /root/.automated_script.sh /root/.zlogin 2>/dev/null || true
+CHROOT
+
+# ----------------------------------------------------------------------------
+# 9. Mount @snapshots now that snapper has been configured, so a first
+#    verification snapshot can be taken immediately if desired.
+# ----------------------------------------------------------------------------
+mount -o "${BTRFS_MOUNT_OPTS},subvol=@snapshots" "$ROOT_PART" "$TARGET/.snapshots"
+chmod 750 "$TARGET/.snapshots"
+
+log "Installation complete."
+log "Subvolume layout:"
+btrfs subvolume list "$TARGET" | sed 's/^/  /'
+log "Remove the ISO and reboot into the installed Jarvis-OS system."

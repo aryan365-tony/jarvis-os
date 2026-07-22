@@ -42,6 +42,10 @@ Window {
     // State tracking
     property bool isStreaming: false
     property string currentTime: ""
+    // Voice orb state (Phase 5): driven by jarvis.voiceActivity.
+    property string voicePhase: "idle"
+    property real voiceLevel: 0.0
+    property string voiceCaption: ""
 
     // ── Background: ambient particle grid ──────────────────────────────
     ParticleField {
@@ -109,6 +113,34 @@ Window {
         z: 5
         isThinking: root.isStreaming
         modelState: jarvis.modelState
+    }
+
+    // ── Voice Orb (central presence, Phase 5) ──────────────────────────
+    VoiceOrb {
+        id: voiceOrb
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: parent.height * 0.20
+        z: 6
+        phase: root.voicePhase
+        level: root.voiceLevel
+    }
+
+    // Live caption under the orb (transcript / spoken reply).
+    Text {
+        id: voiceCaptionText
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: voiceOrb.bottom
+        anchors.topMargin: Theme.spaceL
+        z: 7
+        width: Math.min(680, parent.width * 0.6)
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+        text: root.voiceCaption
+        color: Theme.textSecondary
+        font.pixelSize: Theme.fontLarge
+        font.family: Theme.fontFamily
+        opacity: root.voiceCaption.length > 0 ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.durationNormal } }
     }
 
     // ── Log Stream (bottom-left floating panel) ────────────────────────
@@ -194,6 +226,15 @@ Window {
 
         function onVoiceStateChanged(state) {
             statusHud.voiceState = state
+        }
+
+        function onVoiceActivity(phase, level, caption) {
+            root.voicePhase = phase
+            root.voiceLevel = level
+            if (caption && caption.length > 0)
+                root.voiceCaption = caption
+            else if (phase === "idle")
+                root.voiceCaption = ""
         }
     }
 

@@ -1,0 +1,2 @@
+# Agent runtime state directory (Phase 0). Present in the image so systemd
+# ReadWritePaths=/var/lib/jarvis has an existing bind target at first boot.

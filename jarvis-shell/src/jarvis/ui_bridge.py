@@ -30,18 +30,23 @@ from PyQt6.QtCore import (
 )
 
 from .agent import ConversationAgent
+from .audit.chain import audit_log
 from .events import (
     HEALTH,
     LOG,
     MODEL_STATUS,
+    VOICE_ACTIVITY,
     VOICE_STATUS,
     Level,
     LogLine,
     ServiceState,
     ServiceStatus,
+    VoiceActivity,
 )
 from .memory import store
 from .runtime import Runtime
+from .tools.registry import ApprovalResult, get_risk_tier
+from .tools.snapshot import create_pre_action_snapshot
 
 log = logging.getLogger("jarvis.bridge")
 
@@ -53,6 +58,7 @@ class JarvisBridge(QObject):
     modelStateChanged = pyqtSignal(str)
     modelOnlineChanged = pyqtSignal(bool)
     voiceStateChanged = pyqtSignal(str)
+    voiceActivity = pyqtSignal(str, float, str)  # phase, level(0..1), caption
     logAppended = pyqtSignal(str, str, str)  # source, level, message
     conversationAppended = pyqtSignal(str, str)  # role, text
     streamingDelta = pyqtSignal(str)  # chunk of assistant text
@@ -88,9 +94,12 @@ class JarvisBridge(QObject):
     def start(self) -> None:
         """Called once after the QML engine is loaded. Kicks off all services."""
         self._agent = ConversationAgent(
-            confirm=self._confirm_stub,
+            confirm=self.request_tool_approval,
             on_task=self._on_task,
         )
+        # Voice and text share this one agent: route voice transcripts through
+        # the same turn, echoing them into the conversation view + token stream.
+        self._runtime.voice.set_agent_turn(self._voice_agent_turn)
         self._runtime.start_background()
         self._pump_task = asyncio.ensure_future(self._pump())
         self._clock_task = asyncio.ensure_future(self._clock_loop())
@@ -156,7 +165,7 @@ class JarvisBridge(QObject):
     async def _pump(self) -> None:
         """Drain the runtime event bus and re-emit as Qt signals."""
         sub = self._runtime.bus.subscribe(
-            MODEL_STATUS, VOICE_STATUS, LOG, HEALTH
+            MODEL_STATUS, VOICE_STATUS, VOICE_ACTIVITY, LOG, HEALTH
         )
         with sub:
             async for topic, payload in sub:
@@ -171,6 +180,10 @@ class JarvisBridge(QObject):
                     elif topic == VOICE_STATUS and isinstance(payload, ServiceStatus):
                         self._voice_state = payload.state.value
                         self.voiceStateChanged.emit(payload.state.value)
+                    elif topic == VOICE_ACTIVITY and isinstance(payload, VoiceActivity):
+                        self.voiceActivity.emit(
+                            payload.phase.value, float(payload.level), payload.text
+                        )
                     elif topic == LOG and isinstance(payload, LogLine):
                         self.logAppended.emit(
                             payload.source, payload.level.value, payload.message
@@ -185,12 +198,81 @@ class JarvisBridge(QObject):
             self.clockTick.emit(datetime.now().strftime("%H:%M"))
             await asyncio.sleep(1.0)
 
-    # ── Stubs (to be expanded) ──────────────────────────────────────────
-    async def _confirm_stub(self, name: str, args: dict) -> bool:
-        """Placeholder: auto-approve for now. Will be wired to a QML dialog."""
-        # TODO: emit a signal to QML to show a confirmation dialog
-        log.warning("auto-approving irreversible tool %s (confirm dialog pending)", name)
-        return True
+    # ── Tool approval (Phase 3: collapsed approval + snapshot safety net) ─
+    async def request_tool_approval(self, name: str, args: dict) -> ApprovalResult:
+        """Approve a tool call, tiered by risk.
+
+        Autonomy model: the agent is trusted to *act*, and recoverability — not
+        a human click — is the safety mechanism. So:
+
+        * ``low`` / ``medium`` — approved instantly, no snapshot, no prompt.
+        * ``high``             — take a pre-action snapper snapshot FIRST, log a
+                                 high-risk audit entry, then approve. The
+                                 snapshot id is threaded back through
+                                 :class:`ApprovalResult` so the audit entry and
+                                 ``ops/rollback.sh`` can undo exactly this change.
+
+        If the snapshot cannot be taken, the high-risk action is DENIED — no
+        irreversible change is ever allowed to run without its safety net.
+        """
+        try:
+            tier = get_risk_tier(name)
+        except KeyError:
+            tier = "high"  # unknown -> most cautious
+
+        if tier in ("low", "medium"):
+            return ApprovalResult(approved=True)
+
+        # high tier
+        snap_id = await asyncio.to_thread(
+            create_pre_action_snapshot, f"pre-action: {name} {args}"
+        )
+        if snap_id is None:
+            audit_log(
+                "high_risk_action_denied",
+                {"tool": name, "args": args, "reason": "snapshot_unavailable"},
+            )
+            log.error("high-risk tool %s denied: could not take pre-action snapshot", name)
+            return ApprovalResult(approved=False)
+
+        audit_log(
+            "high_risk_action",
+            {"tool": name, "args": args, "snapshot_id": snap_id},
+        )
+        self._runtime.bus.publish(
+            LOG,
+            LogLine("tool", Level.WARNING, f"high-risk {name} (snapshot #{snap_id})"),
+        )
+        return ApprovalResult(approved=True, snapshot_id=snap_id)
+
+    # ── Voice <-> shared agent bridge (Phase 5) ─────────────────────────
+    async def _voice_agent_turn(self, transcript: str, on_token):
+        """Run a spoken turn through the SAME agent as text, mirroring it to UI.
+
+        The voice pipeline streams tokens to TTS via ``on_token``; here we also
+        echo the transcript and streamed reply into the on-screen conversation
+        so speech and text share one visible, unified history.
+        """
+        self.conversationAppended.emit("user", transcript)
+        self.streamingStarted.emit()
+        buffer: list[str] = []
+
+        async def sink(tok: str) -> None:
+            buffer.append(tok)
+            self.streamingDelta.emit(tok)
+            await on_token(tok)  # keep feeding TTS
+
+        assert self._agent is not None
+        try:
+            final = await self._agent.send(transcript, sink)
+        except Exception as e:
+            log.exception("voice agent turn failed")
+            final = f"[error: {e}]"
+            self.streamingDelta.emit(final)
+        full = "".join(buffer) or final
+        self.streamingFinished.emit(full)
+        self.conversationAppended.emit("assistant", full)
+        return final
 
     async def _on_task(self, tool_name: str, state: str, detail: str) -> None:
         self._runtime.bus.publish(

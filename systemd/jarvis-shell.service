@@ -8,6 +8,12 @@ Requires=seatd.service
 # If the kiosk app crashes, allow tty1 getty to take over instead of leaving
 # the user on an empty VT.
 Conflicts=getty@tty1.service
+# Phase 1: cap process-level crash loops. If the shell dies >5 times within
+# 60s, systemd stops restarting it and marks the unit failed (surfaced via
+# `systemctl status` / journal) instead of pegging the CPU forever. The
+# in-process Supervisor handles background-task crashes with its own backoff.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -30,6 +36,35 @@ Restart=always
 RestartSec=3
 CPUWeight=100
 MemoryHigh=16G
+
+# --- Phase 0 sandboxing ----------------------------------------------------
+# ProtectSystem=strict makes the whole hierarchy read-only except the paths in
+# ReadWritePaths; ProtectHome=read-only additionally locks /home, /root and
+# /run/user/ read-only. ReadWritePaths is therefore a LIVING LIST (the plan
+# says so): every directory the shell + cage compositor legitimately writes to
+# must be enumerated here, or startup trips a namespace/ProtectSystem denial.
+#   * /home/jarvisuser/.local/share/jarvis  -> memory.sqlite3 + cage.log
+#   * /home/jarvisuser/.cache /.config      -> Qt/Qt Quick runtime caches
+#   * /home/jarvisuser/dev/jarvis-os        -> plan-specified working tree
+#   * /var/lib/jarvis                       -> plan-specified agent state
+#   * /run/user/1000 (jarvisuser)           -> Wayland socket (else black screen)
+# These dirs are pre-created in the image so the bind mounts exist at first boot.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jarvisuser/dev/jarvis-os /home/jarvisuser/.local/share/jarvis /home/jarvisuser/.cache /home/jarvisuser/.config /var/lib/jarvis
+ReadWritePaths=/home/jarvisuser/scratch
+ReadWritePaths=-/run/user/1000
+# --- Phase 2: NoNewPrivileges landmine resolved ----------------------------
+# The agent's entire root surface is the five scoped `sudo` commands in
+# /etc/sudoers.d/jarvis-agent (pacman/systemctl/btrfs/snapper/jarvis-fsop).
+# sudo relies on a setuid binary, which NoNewPrivileges=yes categorically
+# blocks — so the flag is INCOMPATIBLE with the Phase 2 tool set. Per the plan,
+# this is resolved by dropping NNP HERE (not by widening sudoers). The real
+# privilege boundary is the scoped sudoers allow-list plus the denylist-guarded
+# jarvis-fsop helper; those, not NNP, contain the agent. The remaining sandbox
+# controls (ProtectSystem=strict, ProtectHome=read-only, PrivateTmp) stay on.
+# NoNewPrivileges is intentionally NOT set (== no).
+PrivateTmp=yes
 
 [Install]
 WantedBy=graphical.target

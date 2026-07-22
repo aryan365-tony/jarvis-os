@@ -1,0 +1,2 @@
+# Placeholder so ~/.config exists for Qt runtime config under a read-only /home
+# (ProtectHome=read-only + ReadWritePaths in systemd/jarvis-shell.service).

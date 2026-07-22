@@ -202,6 +202,101 @@ Check shell service health inside the VM:
 systemctl status jarvis-shell
 ```
 
+## Step 10a: Install Jarvis-OS to Disk (btrfs system)
+
+The live ISO now ships an installer that lays down a **persistent btrfs system**
+with the subvolume layout the snapshot safety net needs
+(`@`, `@home`, `@snapshots`, `@var_log`) and configures `snapper` for `/` and
+`/home`. Run it from the live environment (a console via `Ctrl+Alt+F2`):
+
+```bash
+lsblk                       # identify the target disk, e.g. /dev/vda
+sudo jarvis-install /dev/vda
+```
+
+The installer partitions GPT (ESP + btrfs), clones the live rootfs, installs
+systemd-boot, and enables `jarvis-shell`. Reboot into the installed system
+(remove the ISO):
+
+```bash
+sudo systemctl reboot
+```
+
+To exercise install + first boot automatically in QEMU from the host, use:
+
+```bash
+ops/test/qemu-install-boot.sh
+```
+
+## Step 10b: Run the Acceptance Gates (inside the installed VM)
+
+```bash
+cd /home/jarvisuser/dev/jarvis-os
+sudo ops/test/phase0-verify.sh          # hardening + scoped sudo + snapshots
+sudo ops/test/snapper-selftest.sh       # snapshot create + rollback
+SOAK_TURNS=200 ops/test/phase6-integration.sh   # full stack + soak
+```
+
+The acceptance checklist and how-to for every gate is in
+`ops/test/PHASE6-ACCEPTANCE.md`.
+
+## Step 10c: Autonomy — Tools, Snapshots, Audit, Voice
+
+The agent now controls the whole system through a **risk-tiered** tool registry.
+Every tool declares a tier at registration:
+
+- **low** — read-only / sandboxed (runs instantly): `fs_read`, `fs_scratch`
+  (writes confined to `~/scratch`), `pkg_query`, `svc_status`, `proc_list`,
+  `diag_journal`/`diag_dmesg`/`diag_resources`, `display_brightness`,
+  `session_lock`, `snapshot_list`, `audit_review`.
+- **medium** — recoverable state changes (instant): `svc_control`, `proc_kill`.
+- **high** — irreversible/system-altering: `pkg_manage` (install/remove/upgrade),
+  `fs_system` (via the audited root helper `jarvis-fsop`), `snapshot_rollback`,
+  `shell_exec`, `optimize_backend`. **Before any high-tier action runs, a
+  pre-action `snapper` snapshot is taken automatically** and linked into the
+  tamper-evident audit chain — so anything the agent does can be rolled back.
+
+Privilege boundary: the agent's entire root surface is the five scoped commands
+in `/etc/sudoers.d/jarvis-agent` (`pacman`, `systemctl`, `btrfs`, `snapper`,
+`jarvis-fsop`). It is **never** granted `NOPASSWD: ALL`.
+
+Headless CLI (works without the GUI):
+
+```bash
+jarvis audit verify        # walk the hash chain; report first broken entry
+jarvis audit tail 20       # last 20 audited actions (tool, tier, snapshot id)
+jarvis db checkpoint       # fold the WAL back into the DB
+jarvis db vacuum           # compact the conversation/audit DB
+```
+
+Undo a change the agent made:
+
+```bash
+snapper -c root list                 # find the pre-action snapshot id
+sudo ops/rollback.sh <snapshot_id>   # or run with no args to pick interactively
+sudo systemctl reboot                # boot into the restored state
+```
+
+Housekeeping (checkpoints the DB and prunes old snapshots, keeping the recent
+high-risk safety net referenced by the audit log):
+
+```bash
+ops/cleanup-space.sh                 # add --dry-run to preview
+```
+
+Voice: the shell is voice-first. When the optional engines
+(openWakeWord + faster-whisper + piper) and a microphone are present, say the
+wake word and the central **orb** cycles idle → listening → thinking → speaking;
+you can **barge in** to interrupt speech. Voice and text drive the *same* agent,
+so history is shared. Without engines/mic the shell runs text-only and clearly
+says so — voice is an optional accelerator, never a gate. Toggle in
+`jarvis-shell/config/jarvis.toml` under `[voice]`.
+
+At-rest memory: the conversation/audit DB is always `0600` owner-only. Optional
+SQLCipher encryption is available via `[memory] encrypt_at_rest = true` when the
+`pysqlcipher3` driver is present; full-disk LUKS on `@home` is an installer
+opt-in.
+
 ## Step 11: Use the Runtime After Boot
 
 The UI can operate before any model is downloaded.

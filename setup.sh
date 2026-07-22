@@ -160,24 +160,27 @@ shopt -s nullglob
 LOCAL_GGUFS=(llama/models/*.gguf)
 shopt -u nullglob
 
-if [[ "${INCLUDE_MODELS_IN_ISO:-0}" == "1" ]]; then
+# Phase 0: the model is baked into the ISO at build time so the machine is
+# offline-first and has no first-boot network fetch on the default boot path.
+# Baking is therefore the DEFAULT; set INCLUDE_MODELS_IN_ISO=0 to opt out (e.g.
+# to build a smaller image and import a GGUF from offline USB post-install).
+if [[ "${INCLUDE_MODELS_IN_ISO:-1}" != "0" ]]; then
     if [[ ${#LOCAL_GGUFS[@]} -gt 0 ]]; then
-        echo "Including local GGUF model files in ISO staging (INCLUDE_MODELS_IN_ISO=1)..."
+        echo "Baking local GGUF model file(s) into ISO staging (offline-first default)..."
         rsync "${RSYNC_ARGS[@]}" "${LOCAL_GGUFS[@]}" iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
     else
-        echo "ERROR: INCLUDE_MODELS_IN_ISO=1 set, but no GGUF files found in llama/models/"
-        exit 1
+        echo "WARNING: no GGUF found in llama/models/ to bake into the ISO."
+        echo "The image will boot without a model; import one from offline USB post-install"
+        echo "or place a .gguf in llama/models/ and re-run setup.sh."
     fi
 else
+    echo "Skipping GGUF inclusion (INCLUDE_MODELS_IN_ISO=0). Import a model from"
+    echo "offline USB post-install by copying a .gguf into the models directory."
     if [[ ${#LOCAL_GGUFS[@]} -gt 0 ]]; then
-        echo "Skipping GGUF inclusion by default (INCLUDE_MODELS_IN_ISO is not 1)."
-        echo "Detected local model(s):"
+        echo "Detected local model(s) that will NOT be embedded:"
         for f in "${LOCAL_GGUFS[@]}"; do
             echo "  - $f"
         done
-        echo "To embed them in the ISO, run: INCLUDE_MODELS_IN_ISO=1 ./setup.sh"
-    else
-        echo "Skipping GGUF inclusion (default). Models will be downloaded post-boot if needed."
     fi
 fi
 

@@ -9,6 +9,33 @@ useradd -m -U -G wheel,video,audio,input,seat -s /bin/bash jarvisuser || true
 usermod -aG seat jarvisuser || true
 chown -R jarvisuser:jarvisuser /home/jarvisuser
 
+# Agent runtime state dir must be writable by the sandboxed shell service
+# (systemd ReadWritePaths=/var/lib/jarvis under ProtectSystem=strict).
+install -d -o jarvisuser -g jarvisuser -m 0750 /var/lib/jarvis
+
+# Phase 2: agent fs sandbox. Low-tier fs_scratch confines writes here; the shell
+# service lists it in ReadWritePaths. Owned by jarvisuser (no root needed).
+install -d -o jarvisuser -g jarvisuser -m 0755 /home/jarvisuser/scratch
+
+# Install the jarvis console script (`jarvis audit|db ...`) system-wide without
+# touching the pacman-managed deps (PyQt6/httpx/psutil come from packages).
+# --break-system-packages is required because Arch marks its Python as
+# externally-managed (PEP 668). Non-fatal: the shell also runs from source.
+if ! pip install --no-deps --break-system-packages \
+        /home/jarvisuser/dev/jarvis-os/jarvis-shell; then
+  echo "WARN: could not install 'jarvis' CLI entrypoint; source still works" >&2
+fi
+
+# Phase 5: voice engines are OPTIONAL accelerators. Install best-effort; if the
+# build host has no network or a wheel is unavailable, the shell degrades to
+# text (see jarvis.voice). Never fail the build over voice. sounddevice is here
+# (not in packages.x86_64) because python-sounddevice is AUR-only; the pip wheel
+# binds to the system libportaudio provided by the 'portaudio' package.
+if ! pip install --break-system-packages \
+        sounddevice openwakeword faster-whisper piper-tts; then
+  echo "WARN: voice engines not installed; shell will run text-only" >&2
+fi
+
 # Enable necessary services
 # llama-server is intentionally left disabled by default so the system can boot
 # and be debugged without a preloaded GGUF model. Start/enable it after

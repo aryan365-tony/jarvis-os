@@ -78,6 +78,15 @@ class ReadinessService:
         if self._task is None:
             self._task = asyncio.create_task(self._run(), name="readiness-poller")
 
+    async def run(self) -> None:
+        """Run the poll loop in the caller's task (used by the supervisor).
+
+        Unlike :meth:`start`, this does not create its own task — the
+        :class:`~jarvis.supervisor.Supervisor` owns the task and provides
+        restart-with-backoff if this loop ever raises.
+        """
+        await self._run()
+
     async def stop(self) -> None:
         await self._stop_server_process()
         if self._task:

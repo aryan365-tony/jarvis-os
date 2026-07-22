@@ -9,5 +9,17 @@ RestartSec=3
 CPUWeight=150
 MemoryHigh=6G
 
+# --- Phase 0 sandboxing ----------------------------------------------------
+# The backend only reads: the baked GGUF under /home/jarvisuser/dev/jarvis-os
+# and the runtime libs/binaries under /usr/local/lib/jarvis. It needs no write
+# access to the system, so ProtectSystem=strict + ProtectHome=read-only apply
+# cleanly. /var/lib/jarvis is granted for any future runtime state; /tmp is
+# private (llama.cpp mmaps happen there).
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/jarvis
+NoNewPrivileges=yes
+PrivateTmp=yes
+
 [Install]
 WantedBy=graphical.target

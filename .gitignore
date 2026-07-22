@@ -15,19 +15,18 @@ llama/vendor/
 kernel/last-build.log
 
 # Regenerated ISO staging artifacts
-iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
-iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu/
-iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu
-iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu
-iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/*.so
-iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/*.so.*
-iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/libllama-*-impl.so
+# setup.sh rsyncs the whole repo into the live airootfs and stages the compiled
+# llama backend under /usr/local/lib. These are fully regenerated at build time
+# and must never be committed.
+iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/
+iso-profile/airootfs/usr/local/lib/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
 .Python
 env/
 venv/

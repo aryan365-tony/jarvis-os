@@ -1,5 +1,11 @@
 [Unit]
 Description=Download optional Jarvis GGUF model
+# Phase 0: the model is baked into the image, so there is NO first-boot network
+# fetch on the default boot path. This unit is a MANUAL/offline-import helper
+# only: it is intentionally not enabled and has no [Install] section, so it can
+# never be wired to auto-start at boot (`systemctl enable` will refuse). Trigger
+# it by hand only when importing a model on a machine that shipped without one:
+#   sudo systemctl start jarvis-model-download.service
 Wants=network-online.target
 After=network-online.target
 ConditionPathExistsGlob=!/home/jarvisuser/dev/jarvis-os/llama/models/*.gguf
@@ -7,6 +13,3 @@ ConditionPathExistsGlob=!/home/jarvisuser/dev/jarvis-os/llama/models/*.gguf
 [Service]
 Type=oneshot
 ExecStart=/bin/bash /home/jarvisuser/dev/jarvis-os/llama/download-model.sh --start-llama
-
-[Install]
-WantedBy=multi-user.target

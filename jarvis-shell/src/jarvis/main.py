@@ -30,6 +30,14 @@ def main() -> int:
     _configure_logging()
     log = logging.getLogger("jarvis.main")
 
+    # Headless subcommands (audit/db maintenance) short-circuit before any Qt
+    # import so they run on servers/scripts without a display.
+    from .cli import dispatch
+
+    rc = dispatch(sys.argv[1:])
+    if rc is not None:
+        return rc
+
     # Force Wayland when running under cage/seatd; fallback to xcb for dev.
     if "WAYLAND_DISPLAY" in os.environ:
         os.environ.setdefault("QT_QPA_PLATFORM", "wayland")

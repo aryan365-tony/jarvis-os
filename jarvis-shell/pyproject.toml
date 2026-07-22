@@ -11,8 +11,23 @@ dependencies = [
     "PyQt6>=6.6",
     "qasync>=0.27",
     "httpx>=0.27",
+    # Phase 2: process inspection/control tools (proc_manage). Degrades
+    # gracefully to a clear error at runtime if somehow absent.
+    "psutil>=5.9",
     # tomllib is stdlib on 3.11+; tomli is a fallback for older interpreters.
     "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Phase 5: voice pipeline engines. All optional accelerators — the shell runs
+# text-only without them and degrades gracefully (see jarvis.voice). Baked into
+# the ISO image but not required to import or test the package.
+voice = [
+    "sounddevice>=0.4",
+    "numpy>=1.24",
+    "openwakeword>=0.6",
+    "faster-whisper>=1.0",
+    "piper-tts>=1.2",
 ]
 
 [project.scripts]
@@ -24,3 +39,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "jarvis.memory" = ["migrations/*.sql"]
 "jarvis" = ["qml/*.qml", "qml/components/*.qml", "qml/qmldir"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -30,6 +30,9 @@ xf86-video-amdgpu
 # --- Compositor / seat ---
 cage
 seatd
+wlrctl
+wtype
+ydotool
 
 # --- Installer + btrfs/snapper snapshot foundation (Phase 0) ---
 # btrfs-progs: subvolume/snapshot primitives for @/@home/@snapshots/@var_log.

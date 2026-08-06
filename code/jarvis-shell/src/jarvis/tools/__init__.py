@@ -18,3 +18,4 @@ from . import voice_ctl
 from . import scheduler
 from . import home_assistant
 from . import browser
+from . import desktop_control

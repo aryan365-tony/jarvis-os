@@ -30,7 +30,6 @@ xf86-video-amdgpu
 # --- Compositor / seat ---
 cage
 seatd
-wlrctl
 wtype
 ydotool
 

@@ -134,7 +134,9 @@ if [[ "${LLM_MODE}" == "local" ]]; then
             /home/jarvisuser/dev/jarvis-os/llama/scripts/build_backend.sh
         fi
         echo "Starting local llama-server..."
-        sudo systemctl enable --now llama-server.service || true
+        sudo systemctl start --no-block llama-server.service || true
+        echo "Enabling local llama-server for next boot..."
+        sudo systemctl enable llama-server.service || true
     else
         # In chroot: only enable, don't start or download
         echo "Enabling local llama-server for next boot..."
@@ -143,7 +145,8 @@ if [[ "${LLM_MODE}" == "local" ]]; then
 else
     if [[ "${IN_CHROOT}" != "1" ]]; then
         echo "Stopping local llama-server (if running)..."
-        sudo systemctl disable --now llama-server.service || true
+        sudo systemctl stop --no-block llama-server.service || true
+        sudo systemctl disable llama-server.service || true
     else
         systemctl disable llama-server.service || true
     fi
@@ -153,6 +156,6 @@ fi
 if [[ "${IN_CHROOT}" != "1" ]]; then
     if systemctl is-active --quiet jarvis-shell.service; then
         echo "Restarting jarvis-shell service to apply changes..."
-        sudo systemctl restart jarvis-shell || echo "Could not restart jarvis-shell."
+        sudo systemctl restart --no-block jarvis-shell || echo "Could not restart jarvis-shell."
     fi
 fi

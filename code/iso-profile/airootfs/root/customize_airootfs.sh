@@ -26,6 +26,14 @@ if ! pip install --no-deps --break-system-packages \
   echo "WARN: could not install 'jarvis' CLI entrypoint; source still works" >&2
 fi
 
+# Install python dependencies for new tools
+if ! pip install --break-system-packages caldav playwright; then
+  echo "WARN: could not install tool dependencies (caldav/playwright)" >&2
+else
+  # Playwright requires browser binaries to be downloaded
+  playwright install chromium || echo "WARN: failed to download playwright chromium binaries" >&2
+fi
+
 # Phase 5: voice engines are OPTIONAL accelerators. Install best-effort; if the
 # build host has no network or a wheel is unavailable, the shell degrades to
 # text (see jarvis.voice). Never fail the build over voice. sounddevice is here

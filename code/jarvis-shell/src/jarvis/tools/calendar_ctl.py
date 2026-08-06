@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-import caldav
 
+try:
+    import caldav
+    _HAS_CALDAV = True
+except ImportError:
+    _HAS_CALDAV = False
 from .registry import register
 
 
@@ -21,6 +25,10 @@ def _get_client() -> caldav.DAVClient | str:
     password = os.environ.get("CALDAV_PASSWORD")
     if not url or not user or not password:
         return "error: missing CALDAV_URL, CALDAV_USER, or CALDAV_PASSWORD env vars"
+    
+    if not _HAS_CALDAV:
+        return "error: caldav module is not installed. Calendar tools are disabled."
+        
     return caldav.DAVClient(url=url, username=user, password=password)
 
 

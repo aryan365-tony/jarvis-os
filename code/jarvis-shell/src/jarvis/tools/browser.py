@@ -22,7 +22,16 @@ _browser_thread: threading.Thread | None = None
 
 
 def _browser_worker():
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        while True:
+            func, args, result_queue = _browser_queue.get()
+            if func is None:
+                break
+            result_queue.put(("error", "playwright module is not installed. Browser tools are disabled."))
+        return
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()

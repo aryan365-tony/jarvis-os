@@ -40,8 +40,9 @@ fi
 # llama-server is intentionally left disabled by default so the system can boot
 # and be debugged without a preloaded GGUF model. Start/enable it after
 # downloading a model post-boot.
-systemctl enable jarvis-shell.service
 systemctl enable seatd.service
+systemctl enable jarvis-shell.service
+systemctl enable jarvis-live-prompt.service
 # jarvis-shell owns /dev/tty1 (it Conflicts=getty@tty1). Enabling getty@tty1 here
 # too made both units race for the same VT during graphical.target activation,
 # which could tear down the VT right as cage grabbed it -> black screen. Put the

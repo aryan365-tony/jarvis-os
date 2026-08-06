@@ -202,8 +202,9 @@ def _load_or_create_key(key_path: str) -> str:
             return p.read_text().strip()
         p.parent.mkdir(parents=True, exist_ok=True)
         key = os.urandom(32).hex()
-        p.write_text(key)
-        os.chmod(p, 0o600)
+        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(key)
         return key
     except OSError:
         # If we cannot persist a stable key, fall back to no encryption rather

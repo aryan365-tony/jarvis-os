@@ -1,0 +1,16 @@
+[Unit]
+Description=Jarvis Live ISO LLM Configuration Prompt
+ConditionPathExists=/run/archiso
+ConditionPathExists=!/tmp/.jarvis_live_prompt_done
+Before=jarvis-shell.service
+After=plymouth-quit-wait.service systemd-user-sessions.service seatd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/jarvisuser/dev/jarvis-os/ops/live-llm-prompt.sh
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=graphical.target

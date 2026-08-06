@@ -63,3 +63,4 @@ wireplumber
 portaudio
 python-numpy
 brightnessctl
+dialog

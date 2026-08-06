@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:  # Python 3.11+ ships tomllib in the stdlib.
     import tomllib as _toml
@@ -23,6 +23,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for < 3.11
 
 @dataclass
 class LLMConfig:
+    mode: Literal["local", "remote"] = "local"
+    base_url: str = "http://127.0.0.1:8080/v1"
+    api_key_env: str | None = None
     endpoint: str = "http://127.0.0.1:8080/v1/chat/completions"
     health_endpoint: str = "http://127.0.0.1:8080/health"
     model_name: str = "gemma-4b-it"
@@ -33,6 +36,18 @@ class LLMConfig:
         "Prefer short, clear answers. Use tools only when they materially help. "
         "Never invent tool results."
     )
+
+
+@dataclass
+class ToolsConfig:
+    enabled_domains: dict[str, bool] = field(default_factory=lambda: {
+        "home_assistant": False,
+        "browser": False,
+        "desktop_control": False,
+        "calendar": False,
+    })
+    home_assistant_url: str = "http://127.0.0.1:8123"
+    home_assistant_token_env: str = "HA_TOKEN"
 
 
 @dataclass
@@ -94,6 +109,7 @@ class BootConfig:
 @dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     ui: UIConfig = field(default_factory=UIConfig)
@@ -108,9 +124,14 @@ def _filter(cls: type, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_path() -> Path:
-    p = Path("config/jarvis.toml")
-    if p.exists():
-        return p
+    import os
+    if override := os.environ.get("JARVIS_CONFIG_PATH"):
+        return Path(override)
+    
+    canonical = Path("/home/jarvisuser/dev/jarvis-os/config/jarvis.toml")
+    if canonical.exists():
+        return canonical
+    
     return Path(__file__).resolve().parents[3] / "config" / "jarvis.toml"
 
 
@@ -120,8 +141,13 @@ def load_config(path: str | None = None) -> Config:
     if p.exists():
         with open(p, "rb") as f:
             data = _toml.load(f)
+            
+    llm_data = data.get("llm", {})
+    llm_cfg = LLMConfig(**_filter(LLMConfig, llm_data))
+
     return Config(
-        llm=LLMConfig(**_filter(LLMConfig, data.get("llm", {}))),
+        llm=llm_cfg,
+        tools=ToolsConfig(**_filter(ToolsConfig, data.get("tools", {}))),
         memory=MemoryConfig(**_filter(MemoryConfig, data.get("memory", {}))),
         policy=PolicyConfig(**_filter(PolicyConfig, data.get("policy", {}))),
         ui=UIConfig(**_filter(UIConfig, data.get("ui", {}))),

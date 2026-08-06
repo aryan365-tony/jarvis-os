@@ -48,7 +48,8 @@ class Runtime:
 
     def start_background(self) -> None:
         """Kick off non-blocking background initialisation."""
-        self._verify_audit_on_boot()
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(self._verify_audit_on_boot))
         self.supervisor.start_all()
 
     def _verify_audit_on_boot(self) -> None:

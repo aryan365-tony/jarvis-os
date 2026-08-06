@@ -66,9 +66,48 @@ done
 # ----------------------------------------------------------------------------
 log "Target disk: $DISK"
 lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS "$DISK" || true
+
+LLM_MODE="${JARVIS_LLM_MODE:-local}"
+LLM_BASE_URL="${JARVIS_LLM_BASE_URL:-http://127.0.0.1:8080/v1}"
+LLM_API_KEY_ENV="${JARVIS_LLM_API_KEY_ENV:-}"
+
 if [[ "$ASSUME_YES" -ne 1 ]]; then
   read -r -p "This ERASES all data on $DISK. Type 'YES' to continue: " confirm
   [[ "$confirm" == "YES" ]] || die "aborted by user"
+  
+  echo ""
+  read -r -p "Run the AI model locally (llama.cpp on this machine) or connect to a remote llama.cpp-compatible server? [local/remote] (default: local): " mode_ans
+  if [[ "${mode_ans,,}" == "remote" ]]; then
+      LLM_MODE="remote"
+      while true; do
+          read -r -p "Enter the remote server base URL (e.g. http://192.168.1.100:8080/v1): " url_ans
+          if [[ -n "$url_ans" && "$url_ans" == http* ]]; then
+              LLM_BASE_URL="$url_ans"
+              log "Testing connection to $LLM_BASE_URL/models ..."
+              if curl -s -f -m 3 "$LLM_BASE_URL/models" >/dev/null; then
+                  log "Connection successful!"
+                  break
+              else
+                  read -r -p "Warning: Could not connect to $LLM_BASE_URL/models. Continue anyway (server may not be up yet) or re-enter URL? [c/R]: " check_ans
+                  if [[ "${check_ans,,}" == "c" ]]; then
+                      break
+                  fi
+              fi
+          else
+              log "Please enter a valid URL starting with http:// or https://"
+          fi
+      done
+      
+      read -r -p "Does this server require a Bearer token for authentication? [y/N]: " auth_ans
+      if [[ "${auth_ans,,}" == "y" ]]; then
+          read -r -p "Enter the name of the ENVIRONMENT VARIABLE that will hold the token (e.g. JARVIS_LLM_TOKEN): " env_ans
+          if [[ -n "$env_ans" ]]; then
+              LLM_API_KEY_ENV="$env_ans"
+              log "Configured to use environment variable $LLM_API_KEY_ENV for authentication."
+              log "(You must set this variable via systemd EnvironmentFile or shell profile before running Jarvis.)"
+          fi
+      fi
+  fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -188,6 +227,9 @@ arch-chroot "$TARGET" /usr/bin/env \
   ROOT_UUID="$ROOT_UUID" \
   KERNEL_CMDLINE="$KERNEL_CMDLINE" \
   BTRFS_MOUNT_OPTS="$BTRFS_MOUNT_OPTS" \
+  LLM_MODE="$LLM_MODE" \
+  LLM_BASE_URL="$LLM_BASE_URL" \
+  LLM_API_KEY_ENV="$LLM_API_KEY_ENV" \
   bash -euo pipefail <<'CHROOT'
 # --- initramfs -------------------------------------------------------------
 mkinitcpio -P
@@ -247,6 +289,19 @@ systemctl enable snapper-cleanup.timer || true
 
 # Remove live-only autologin/archiso automation if present on the target.
 rm -f /root/.automated_script.sh /root/.zlogin 2>/dev/null || true
+
+# --- LLM Backend and Config Setup ------------------------------------------
+export LLM_MODE="${LLM_MODE}"
+export LLM_BASE_URL="${LLM_BASE_URL}"
+export LLM_API_KEY_ENV="${LLM_API_KEY_ENV}"
+export IN_CHROOT=1
+
+if [[ -x /home/jarvisuser/dev/jarvis-os/ops/lib/llm-mode-apply.sh ]]; then
+    /home/jarvisuser/dev/jarvis-os/ops/lib/llm-mode-apply.sh
+else
+    echo "WARN: llm-mode-apply.sh not found, skipping config generation"
+fi
+
 CHROOT
 
 # ----------------------------------------------------------------------------

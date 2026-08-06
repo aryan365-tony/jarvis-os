@@ -44,8 +44,17 @@ class AsyncLLMClient:
         if tools:
             payload["tools"] = tools
 
+        headers = {}
+        if self._cfg.llm.api_key_env:
+            import os
+            token = os.environ.get(self._cfg.llm.api_key_env, "")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+        endpoint = f"{self._cfg.llm.base_url}/chat/completions"
+
         async with self._client.stream(
-            "POST", self._cfg.llm.endpoint, json=payload
+            "POST", endpoint, json=payload, headers=headers
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

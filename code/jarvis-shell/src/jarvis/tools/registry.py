@@ -86,7 +86,7 @@ class Tool:
     description: str = ""
     parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
     max_calls_per_turn: int = 3
-
+    domain: str = "core"
 
 REGISTRY: dict[str, Tool] = {}
 
@@ -97,6 +97,7 @@ def register(
     description: str = "",
     parameters: dict | None = None,
     max_calls_per_turn: int = 3,
+    domain: str = "core",
 ):
     # Fail loudly at import time if a tool omits/mistypes its tier — no tool may
     # ever enter the registry without an explicit, valid risk tier.
@@ -110,6 +111,7 @@ def register(
             description=description or (fn.__doc__ or "").strip(),
             parameters=parameters or {"type": "object", "properties": {}},
             max_calls_per_turn=max_calls_per_turn,
+            domain=domain,
         )
         return fn
 
@@ -140,6 +142,20 @@ def tool_schemas() -> list[dict]:
     ]
 
 
+def domain_enabled(domain: str) -> bool:
+    """Single source of truth for whether a tool's domain may execute.
+
+    ``"core"`` (native OS tools already in this repo) is always enabled and is
+    not present in config — it cannot be turned off via config, matching the
+    existing tools' behavior today. Every other domain must be explicitly
+    opted into via ``config.tools.enabled_domains``.
+    """
+    if domain == "core":
+        return True
+    from .. import config as _config  # local import avoids a config<->registry cycle
+    return _config.get_config().tools.enabled_domains.get(domain, False)
+
+
 async def _resolve_approval(
     confirm: ConfirmFn | None, name: str, args: dict
 ) -> ApprovalResult:
@@ -167,6 +183,10 @@ async def execute(
     if tool is None:
         audit_log("tool_call_rejected", {"name": name, "reason": "unknown_tool"})
         return f"error: unknown tool {name}"
+
+    if not domain_enabled(tool.domain):
+        audit_log("tool_call_rejected", {"name": name, "reason": "domain_disabled", "domain": tool.domain})
+        return f"error: '{tool.domain}' tools are disabled in config"
 
     # Per-turn call budgets (per-tool and global ceiling).
     if call_counts is not None:

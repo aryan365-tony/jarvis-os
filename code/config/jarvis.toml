@@ -9,6 +9,12 @@ request_timeout_s = 60
 db_path = "/home/jarvisuser/.local/share/jarvis/memory.sqlite3"
 core_memory_max_tokens = 1200
 
+[tools.enabled_domains]
+home_assistant = false
+browser = false
+desktop_control = false
+calendar = false
+
 [policy]
 irreversible_requires_confirm = true
 max_tool_calls_per_turn = 12

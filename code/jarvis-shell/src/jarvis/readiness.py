@@ -32,14 +32,17 @@ class ReadinessService:
     def __init__(self, bus: EventBus) -> None:
         self._bus = bus
         self._cfg = get_config()
-        self._desired_online = self._cfg.boot.model_auto_start
+        if self._cfg.llm.mode == "remote":
+            self._desired_online = True
+        else:
+            self._desired_online = self._cfg.boot.model_auto_start or self._cfg.llm.mode == "local"
+
         self._state = (
             ServiceState.INITIALIZING
             if self._desired_online
             else ServiceState.UNAVAILABLE
         )
         self._task: asyncio.Task | None = None
-        self._server_proc: asyncio.subprocess.Process | None = None
         self._model_dir = Path(__file__).resolve().parents[3] / "llama" / "models"
         self._download_script = (
             Path(__file__).resolve().parents[3] / "llama" / "download-model.sh"
@@ -107,41 +110,39 @@ class ReadinessService:
             )
 
     async def _start_server_process(self) -> bool:
-        if self._server_proc and self._server_proc.returncode is None:
+        if self._cfg.llm.mode == "remote":
+            self._online_since = time.monotonic()
             return True
 
-        if not self._server_script.exists():
-            self._emit(ServiceState.ERROR, f"serve script missing: {self._server_script}")
-            return False
-
         try:
-            self._server_proc = await asyncio.create_subprocess_exec(
-                "/bin/bash",
-                str(self._server_script),
+            # We now use systemd to manage the llama-server lifecycle
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "systemctl", "start", "llama-server.service"
             )
+            code = await proc.wait()
+            if code != 0:
+                self._emit(ServiceState.ERROR, f"failed to start llama-server.service: code={code}")
+                return False
+
+            # Verify it's active
+            proc = await asyncio.create_subprocess_exec(
+                "systemctl", "is-active", "--quiet", "llama-server.service"
+            )
+            code = await proc.wait()
+            if code != 0:
+                self._emit(ServiceState.ERROR, "llama-server.service failed to stay active")
+                return False
+
+            self._online_since = time.monotonic()
+            return True
         except Exception as e:
             self._emit(ServiceState.ERROR, f"failed to spawn backend: {e}")
             return False
 
-        # Detect immediate exits (missing model/backend) to avoid restart loops.
-        await asyncio.sleep(0.4)
-        if self._server_proc.returncode is not None:
-            code = self._server_proc.returncode
-            self._server_proc = None
-            if code == 0:
-                self._desired_online = False
-                self._emit(
-                    ServiceState.UNAVAILABLE,
-                    "model missing or backend intentionally skipped",
-                )
-            else:
-                self._emit(ServiceState.ERROR, f"backend exited code={code}")
-            return False
-
-        self._online_since = time.monotonic()
-        return True
-
     async def _ensure_model_present(self) -> bool:
+        if self._cfg.llm.mode == "remote":
+            return True
+
         model = self._any_model_path()
         if model is not None:
             return True
@@ -176,17 +177,15 @@ class ReadinessService:
         return True
 
     async def _stop_server_process(self) -> None:
-        if not self._server_proc or self._server_proc.returncode is not None:
-            self._server_proc = None
+        if self._cfg.llm.mode == "remote":
             return
-        self._server_proc.terminate()
         try:
-            await asyncio.wait_for(self._server_proc.wait(), timeout=3.0)
-        except asyncio.TimeoutError:
-            self._server_proc.kill()
-            await self._server_proc.wait()
-        finally:
-            self._server_proc = None
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "systemctl", "stop", "llama-server.service"
+            )
+            await proc.wait()
+        except Exception:
+            pass
 
     async def _run(self) -> None:
         cfg = self._cfg
@@ -218,7 +217,15 @@ class ReadinessService:
                     continue
 
                 try:
-                    r = await client.get(cfg.llm.health_endpoint)
+                    headers = {}
+                    if cfg.llm.api_key_env:
+                        import os
+                        token = os.environ.get(cfg.llm.api_key_env, "")
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
+                            
+                    health_url = f"{cfg.llm.base_url}/models"
+                    r = await client.get(health_url, headers=headers)
                     if r.status_code == 200:
                         self._emit(ServiceState.READY, "healthy")
                     else:

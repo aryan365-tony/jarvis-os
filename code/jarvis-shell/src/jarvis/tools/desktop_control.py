@@ -13,8 +13,11 @@ from .registry import register
 
 
 def _run(args: list[str], timeout: int = 15) -> str:
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    return f"exit={proc.returncode}\n{(proc.stdout or '') + (proc.stderr or '')}"[:8000]
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return f"exit={proc.returncode}\n{(proc.stdout or '') + (proc.stderr or '')}"[:8000]
+    except FileNotFoundError:
+        return f"error: command '{args[0]}' not found. The tool is likely not installed."
 
 
 @register(

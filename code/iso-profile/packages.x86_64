@@ -32,7 +32,6 @@ cage
 seatd
 wtype
 ydotool
-wlrctl
 
 # --- Installer + btrfs/snapper snapshot foundation (Phase 0) ---
 # btrfs-progs: subvolume/snapshot primitives for @/@home/@snapshots/@var_log.

@@ -14,17 +14,17 @@ RSYNC_ARGS=(
 LLAMA_CPP_REF="${LLAMA_CPP_REF:-5556cd369a4c86e093952ba9529cc5cb121b65e9}"
 
 bundled_cpu_backend_usable() {
-    local backend="llama/cpu/server-cpu"
+    local backend="build-assets/llama-runtime/cpu/server-cpu"
     [[ -x "$backend" ]] || return 1
 
     shopt -s nullglob
-    local runtime_libs=(llama/cpu/libllama*.so* llama/cpu/libggml*.so* llama/cpu/libmtmd*.so*)
+    local runtime_libs=(build-assets/llama-runtime/cpu/libllama*.so* build-assets/llama-runtime/cpu/libggml*.so* build-assets/llama-runtime/cpu/libmtmd*.so*)
     shopt -u nullglob
     [[ ${#runtime_libs[@]} -gt 0 ]] || return 1
 
     if command -v ldd >/dev/null 2>&1; then
         local ldd_out
-        if ! ldd_out="$(LD_LIBRARY_PATH="$(pwd)/llama/cpu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$backend" 2>/dev/null)"; then
+        if ! ldd_out="$(LD_LIBRARY_PATH="$(pwd)/build-assets/llama-runtime/cpu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$backend" 2>/dev/null)"; then
             return 1
         fi
         if grep -q "not found" <<< "$ldd_out"; then
@@ -37,23 +37,21 @@ bundled_cpu_backend_usable() {
 
 fetch_llama_cpp_source() {
     local target_dir="$1"
-    git init -q "$target_dir"
-    git -C "$target_dir" remote add origin https://github.com/ggerganov/llama.cpp.git
-    git -C "$target_dir" fetch --depth 1 origin "$LLAMA_CPP_REF"
-    git -C "$target_dir" checkout --detach -q FETCH_HEAD
+    git clone -q https://github.com/ggerganov/llama.cpp.git "$target_dir"
+    git -C "$target_dir" checkout -q "$LLAMA_CPP_REF"
 }
 
 # Keep the kiosk/session entrypoints executable so systemd can launch them even
 # if a checkout loses mode bits.
-chmod +x compositor/cage-jarvis.session llama/serve.sh ops/healthcheck.sh \
-    llama/scripts/build_backend.sh llama/scripts/detect_gpu.py \
-    llama/download-model.sh
+chmod +x code/compositor/cage-jarvis.session code/llama/serve.sh code/ops/healthcheck.sh \
+    code/llama/scripts/build_backend.sh code/llama/scripts/detect_gpu.py \
+    code/llama/download-model.sh
 
-# 1. Build local CPU backend from source by default.
-# Set BUILD_LOCAL_LLAMA_BACKEND=0 to skip local backend compilation.
+# 1. Build local CPU backend from source on the host (optional).
+# The default is 1 so the Live ISO has a functional local backend out-of-the-box.
 if [[ "${BUILD_LOCAL_LLAMA_BACKEND:-1}" == "1" ]]; then
     if [[ "${FORCE_REBUILD_LLAMA_BACKEND:-0}" != "1" ]] && bundled_cpu_backend_usable; then
-        echo "Using existing bundled CPU backend from llama/cpu/."
+        echo "Using existing bundled CPU backend from build-assets/llama-runtime/cpu/."
     else
         echo "Compiling CPU fallback server from source (best effort)..."
         if ! (
@@ -71,14 +69,14 @@ if [[ "${BUILD_LOCAL_LLAMA_BACKEND:-1}" == "1" ]]; then
                 find "$TMP_DIR/build/bin" -maxdepth 1 -type f \( -name 'libllama*.so*' -o -name 'libggml*.so*' -o -name 'libmtmd*.so*' \) -exec strip --strip-unneeded {} + 2>/dev/null || true
             fi
 
-            mkdir -p llama/cpu
-            rm -f llama/cpu/server-cpu
-            find llama/cpu -maxdepth 1 -type f \( -name 'libllama*.so*' -o -name 'libggml*.so*' -o -name 'libmtmd*.so*' \) -delete
-            cp "$TMP_DIR/build/bin/llama-server" llama/cpu/server-cpu
+            mkdir -p build-assets/llama-runtime/cpu
+            rm -f build-assets/llama-runtime/cpu/server-cpu
+            find build-assets/llama-runtime/cpu -maxdepth 1 -type f \( -name 'libllama*.so*' -o -name 'libggml*.so*' -o -name 'libmtmd*.so*' \) -delete
+            cp "$TMP_DIR/build/bin/llama-server" build-assets/llama-runtime/cpu/server-cpu
             shopt -s nullglob
             BUILT_RUNTIME_LIBS=("$TMP_DIR"/build/bin/libllama*.so* "$TMP_DIR"/build/bin/libggml*.so* "$TMP_DIR"/build/bin/libmtmd*.so*)
             if [[ ${#BUILT_RUNTIME_LIBS[@]} -gt 0 ]]; then
-                cp "${BUILT_RUNTIME_LIBS[@]}" llama/cpu/
+                cp "${BUILT_RUNTIME_LIBS[@]}" build-assets/llama-runtime/cpu/
             fi
             shopt -u nullglob
         ); then
@@ -93,21 +91,21 @@ fi
 # 2. Vendor files into iso-profile
 echo "Vendoring files to the ISO staging directory (airootfs)..."
 mkdir -p \
-    iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/{models,scripts} \
-    iso-profile/airootfs/usr/local/lib/jarvis/llama/{cpu,gpu} \
-    iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/{jarvis-shell,compositor,ops} \
-    iso-profile/airootfs/etc/systemd/system
+    code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/{models,scripts} \
+    code/iso-profile/airootfs/usr/local/lib/jarvis/llama/{cpu,gpu} \
+    code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/{jarvis-shell,compositor,ops} \
+    code/iso-profile/airootfs/etc/systemd/system
 
 # Copy/link CPU server + runtime libs
-rsync "${RSYNC_ARGS[@]}" llama/cpu/ iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/
-HOME_CPU_DIR="iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu"
+rsync "${RSYNC_ARGS[@]}" build-assets/llama-runtime/cpu/ code/iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/
+HOME_CPU_DIR="code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/cpu"
 if [[ -L "$HOME_CPU_DIR" ]]; then
     rm -f "$HOME_CPU_DIR"
 elif [[ -d "$HOME_CPU_DIR" ]]; then
     if ! rm -rf "$HOME_CPU_DIR" 2>/dev/null; then
         echo "WARNING: could not replace $HOME_CPU_DIR with a symlink (permission issue)."
         echo "Keeping duplicated staged backend copy for this run."
-        rsync "${RSYNC_ARGS[@]}" llama/cpu/ "$HOME_CPU_DIR/"
+        rsync "${RSYNC_ARGS[@]}" build-assets/llama-runtime/cpu/ "$HOME_CPU_DIR/"
     fi
 fi
 
@@ -116,34 +114,33 @@ if [[ ! -e "$HOME_CPU_DIR" ]]; then
 fi
 
 if [[ -d "$HOME_CPU_DIR" && ! -L "$HOME_CPU_DIR" ]]; then
-    rsync "${RSYNC_ARGS[@]}" llama/cpu/ "$HOME_CPU_DIR/"
+    rsync "${RSYNC_ARGS[@]}" build-assets/llama-runtime/cpu/ "$HOME_CPU_DIR/"
 fi
-if [ -f llama/gpu/server-gpu ]; then
-    rsync "${RSYNC_ARGS[@]}" llama/gpu/server-gpu iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/
+if [ -f build-assets/llama-runtime/gpu/server-gpu ]; then
+    rsync "${RSYNC_ARGS[@]}" build-assets/llama-runtime/gpu/server-gpu code/iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/
 fi
 
-rsync "${RSYNC_ARGS[@]}" jarvis-shell/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/jarvis-shell/ --exclude '.venv' --exclude '__pycache__'
-rsync "${RSYNC_ARGS[@]}" llama/scripts/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/scripts/
-cp llama/serve.sh iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/
-cp llama/download-model.sh iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/
-rsync "${RSYNC_ARGS[@]}" compositor/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/compositor/
-rsync "${RSYNC_ARGS[@]}" ops/ iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/ops/
-cp systemd/*.service iso-profile/airootfs/etc/systemd/system/
+rsync "${RSYNC_ARGS[@]}" code/jarvis-shell/ code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/jarvis-shell/ --exclude '.venv' --exclude '__pycache__'
+rsync "${RSYNC_ARGS[@]}" code/llama/scripts/ code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/scripts/
+cp code/llama/serve.sh code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/
+cp code/llama/download-model.sh code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/
+rsync "${RSYNC_ARGS[@]}" code/compositor/ code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/compositor/
+rsync "${RSYNC_ARGS[@]}" code/ops/ code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/ops/
+cp code/systemd/*.service code/iso-profile/airootfs/etc/systemd/system/
 
-chmod +x iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/serve.sh
-chmod +x iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/download-model.sh
-if [ -f iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu ]; then
-    chmod +x iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu
+find code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os -type f \( -name "*.sh" -o -name "*.py" -o -name "*.session" \) -exec chmod +x {} +
+if [ -f code/iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu ]; then
+    chmod +x code/iso-profile/airootfs/usr/local/lib/jarvis/llama/cpu/server-cpu
 fi
-if [ -f iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/server-gpu ]; then
-    chmod +x iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/server-gpu
+if [ -f code/iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/server-gpu ]; then
+    chmod +x code/iso-profile/airootfs/usr/local/lib/jarvis/llama/gpu/server-gpu
 fi
 
 # Optional: include local GGUFs in the image only when explicitly requested.
 # Default behavior keeps ISO small and shifts model fetch to post-boot.
 # Always clear staged GGUFs first so default builds cannot accidentally include
 # leftovers from prior runs.
-STAGED_MODEL_DIR="iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models"
+STAGED_MODEL_DIR="code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models"
 if ! find "$STAGED_MODEL_DIR" -maxdepth 1 -type f -name '*.gguf' -delete 2>/dev/null; then
     if [[ "${STRICT_STAGING_CLEAN:-0}" == "1" ]]; then
         echo "ERROR: could not clear staged GGUF files in $STAGED_MODEL_DIR (permission issue)."
@@ -157,21 +154,20 @@ if ! find "$STAGED_MODEL_DIR" -maxdepth 1 -type f -name '*.gguf' -delete 2>/dev/
 fi
 
 shopt -s nullglob
-LOCAL_GGUFS=(llama/models/*.gguf)
+LOCAL_GGUFS=(build-assets/models/*.gguf)
 shopt -u nullglob
 
 # Phase 0: the model is baked into the ISO at build time so the machine is
 # offline-first and has no first-boot network fetch on the default boot path.
-# Baking is therefore the DEFAULT; set INCLUDE_MODELS_IN_ISO=0 to opt out (e.g.
-# to build a smaller image and import a GGUF from offline USB post-install).
+# Set INCLUDE_MODELS_IN_ISO=0 to opt out. Default is 1 (ISO includes models).
 if [[ "${INCLUDE_MODELS_IN_ISO:-1}" != "0" ]]; then
     if [[ ${#LOCAL_GGUFS[@]} -gt 0 ]]; then
         echo "Baking local GGUF model file(s) into ISO staging (offline-first default)..."
-        rsync "${RSYNC_ARGS[@]}" "${LOCAL_GGUFS[@]}" iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
+        rsync "${RSYNC_ARGS[@]}" "${LOCAL_GGUFS[@]}" code/iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/llama/models/
     else
-        echo "WARNING: no GGUF found in llama/models/ to bake into the ISO."
+        echo "WARNING: no GGUF found in build-assets/models/ to bake into the ISO."
         echo "The image will boot without a model; import one from offline USB post-install"
-        echo "or place a .gguf in llama/models/ and re-run setup.sh."
+        echo "or place a .gguf in build-assets/models/ and re-run build.sh."
     fi
 else
     echo "Skipping GGUF inclusion (INCLUDE_MODELS_IN_ISO=0). Import a model from"
@@ -185,4 +181,4 @@ else
 fi
 
 echo "Setup complete! You can now build the ISO by running:"
-echo "cd iso-profile && sudo mkarchiso -v -w ~/jarvis-work -o ~/jarvis-out ."
+echo "cd code/iso-profile && sudo mkarchiso -v -w ~/jarvis-work -o ~/jarvis-out ."

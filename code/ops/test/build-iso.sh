@@ -18,7 +18,7 @@
 # Output ISO is written to ./dist/ in the repo root.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
 ENGINE="${ENGINE:-docker}"
@@ -46,9 +46,9 @@ $SUDO "$ENGINE" run --rm --privileged \
   bash -euo pipefail -c '
     pacman -Sy --noconfirm
     pacman -S --noconfirm archiso base-devel git cmake rsync
-    chmod +x setup.sh
-    ./setup.sh
-    cd iso-profile
+    chmod +x build.sh
+    ./build.sh
+    cd code/iso-profile
     mkarchiso -v -w /build/work -o /build/out .
   '
 

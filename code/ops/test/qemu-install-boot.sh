@@ -17,7 +17,7 @@
 # Requirements: qemu-system-x86_64, /dev/kvm, OVMF firmware.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 DISK_IMG="${DISK_IMG:-$REPO_ROOT/dist/jarvis-target.qcow2}"
 DISK_SIZE="${DISK_SIZE:-30G}"
 MEM="${MEM:-8G}"

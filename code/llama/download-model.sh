@@ -38,6 +38,13 @@ if [[ -n "$EXISTING_MODEL" ]]; then
   echo "$(date -Is) model already present: $MODEL_PATH"
 else
   mkdir -p "$MODEL_DIR"
+  
+  exec 9>"/var/tmp/jarvis-model-download.lock"
+  if ! flock -n 9; then
+    echo "$(date -Is) INFO: model download already in progress by another process, skipping"
+    exit 0
+  fi
+
   echo "$(date -Is) downloading model to $MODEL_PATH"
 
   if command -v curl >/dev/null 2>&1; then

@@ -27,20 +27,6 @@ fi
 
 mkdir -p "$LLM_CONFIG_DIR"
 
-# This script runs in two contexts: as root (systemd OOBE prompt at boot,
-# IN_CHROOT=0, no human watching a tty) and as jarvisuser (agent-triggered
-# svc_control.py, which DOES have a NOPASSWD sudoers grant). `sudo` has no
-# NOPASSWD rule for root, so `sudo systemctl ...` run as root blocks forever
-# on a password prompt nobody can answer -- the boot hangs with no error and
-# no timeout. Skip sudo when already root; use -n elsewhere so a missing/
-# denied credential fails fast instead of hanging (the existing `|| true`
-# fallbacks can then actually run).
-if [[ "${EUID}" -eq 0 ]]; then
-    SUDO=()
-else
-    SUDO=(sudo -n)
-fi
-
 if [[ -f "$CONFIG_FILE" ]]; then
     python3 - <<EOF
 import tomllib
@@ -148,9 +134,7 @@ if [[ "${LLM_MODE}" == "local" ]]; then
             /home/jarvisuser/dev/jarvis-os/llama/scripts/build_backend.sh
         fi
         echo "Starting local llama-server..."
-        "${SUDO[@]}" systemctl start --no-block llama-server.service || true
-        echo "Enabling local llama-server for next boot..."
-        "${SUDO[@]}" systemctl enable llama-server.service || true
+        sudo systemctl enable --now llama-server.service || true
     else
         # In chroot: only enable, don't start or download
         echo "Enabling local llama-server for next boot..."
@@ -159,8 +143,7 @@ if [[ "${LLM_MODE}" == "local" ]]; then
 else
     if [[ "${IN_CHROOT}" != "1" ]]; then
         echo "Stopping local llama-server (if running)..."
-        "${SUDO[@]}" systemctl stop --no-block llama-server.service || true
-        "${SUDO[@]}" systemctl disable llama-server.service || true
+        sudo systemctl disable --now llama-server.service || true
     else
         systemctl disable llama-server.service || true
     fi
@@ -170,6 +153,6 @@ fi
 if [[ "${IN_CHROOT}" != "1" ]]; then
     if systemctl is-active --quiet jarvis-shell.service; then
         echo "Restarting jarvis-shell service to apply changes..."
-        "${SUDO[@]}" systemctl restart --no-block jarvis-shell || echo "Could not restart jarvis-shell."
+        sudo systemctl restart jarvis-shell || echo "Could not restart jarvis-shell."
     fi
 fi

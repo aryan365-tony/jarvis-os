@@ -41,4 +41,15 @@ file_permissions=(
   # so it is not listed here.)
   ["/usr/local/lib/jarvis/llama/cpu/server-cpu"]="0:0:755"
   ["/home/jarvisuser/dev/jarvis-os/llama/download-model.sh"]="1000:1000:755"
+  # ops/live-llm-prompt.sh and ops/set-llm-mode.sh both now call this file via
+  # `bash lib/llm-mode-apply.sh` (not a direct exec), so the +x bit is no
+  # longer strictly required for those call sites. This entry is kept as a
+  # belt-and-suspenders guard: mkarchiso silently strips exec bits on files
+  # not listed here, and a direct exec of this script (missing this line)
+  # previously failed with "Permission Denied" mid-way through set -euo
+  # pipefail, aborting BEFORE jarvis.toml was written. The visible symptom was
+  # a user picking "Remote" mode, getting the Permission Denied banner, and
+  # the OS silently continuing to boot the local CPU backend because the
+  # config file was never updated. See CHANGELOG.
+  ["/home/jarvisuser/dev/jarvis-os/ops/lib/llm-mode-apply.sh"]="1000:1000:755"
 )

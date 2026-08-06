@@ -57,7 +57,13 @@ git clone https://github.com/aryan365-tony/jarvis-os.git
 cd jarvis-os
 ```
 
-At this point you should see files like `setup.sh`, `iso-profile/`, `jarvis-shell/`, and `llama/`.
+At this point you should see files like `build.sh` and the `code/` folder.
+
+### Repository Layout
+
+- `code/`: Contains all hand-written source code, configuration, and scripts. This is the only folder an AI agent needs to read or edit.
+- `build-assets/`: Contains generated or vendored binaries (like the local LLM backend) and downloaded GGUF models.
+- `build.sh`: The orchestrator script to build the ISO.
 
 ## Step 3: Prepare Clean Output Paths
 
@@ -108,11 +114,11 @@ Run this inside the container:
 
 ```bash
 cd /root/jarvis-os
-chmod +x setup.sh
-./setup.sh
+chmod +x build.sh
+./build.sh
 ```
 
-What `setup.sh` does:
+What `build.sh` does:
 
 - stages the project into the Arch ISO filesystem tree
 - keeps integrated llama backend build enabled by default
@@ -124,7 +130,7 @@ What `setup.sh` does:
 Run this inside the container:
 
 ```bash
-cd /root/jarvis-os/iso-profile
+cd /root/jarvis-os/code/iso-profile
 mkarchiso -v -w /root/jarvis-work -o /root/jarvis-out .
 ```
 
@@ -214,6 +220,11 @@ lsblk                       # identify the target disk, e.g. /dev/vda
 sudo jarvis-install /dev/vda
 ```
 
+During installation, you will be prompted to choose between running the AI model **locally** (llama.cpp on this machine) or connecting to a **remote** llama.cpp-compatible server (like OpenAI API or a self-hosted instance). 
+- If you choose **local**, the installer will automatically download the default model and compile the backend.
+- If you choose **remote**, it will skip the local model setup and configure the system to point to your provided URL.
+*Note: You can switch modes at any time after installation by running `sudo ops/set-llm-mode.sh`.*
+
 The installer partitions GPT (ESP + btrfs), clones the live rootfs, installs
 systemd-boot, and enables `jarvis-shell`. Reboot into the installed system
 (remove the ISO):
@@ -225,7 +236,7 @@ sudo systemctl reboot
 To exercise install + first boot automatically in QEMU from the host, use:
 
 ```bash
-ops/test/qemu-install-boot.sh
+code/ops/test/qemu-install-boot.sh
 ```
 
 ## Step 10b: Run the Acceptance Gates (inside the installed VM)
@@ -238,7 +249,7 @@ SOAK_TURNS=200 ops/test/phase6-integration.sh   # full stack + soak
 ```
 
 The acceptance checklist and how-to for every gate is in
-`ops/test/PHASE6-ACCEPTANCE.md`.
+`code/ops/test/PHASE6-ACCEPTANCE.md`.
 
 ## Step 10c: Autonomy — Tools, Snapshots, Audit, Voice
 
@@ -290,7 +301,7 @@ wake word and the central **orb** cycles idle → listening → thinking → spe
 you can **barge in** to interrupt speech. Voice and text drive the *same* agent,
 so history is shared. Without engines/mic the shell runs text-only and clearly
 says so — voice is an optional accelerator, never a gate. Toggle in
-`jarvis-shell/config/jarvis.toml` under `[voice]`.
+`config/jarvis.toml` under `[voice]`.
 
 At-rest memory: the conversation/audit DB is always `0600` owner-only. Optional
 SQLCipher encryption is available via `[memory] encrypt_at_rest = true` when the
@@ -337,20 +348,20 @@ curl http://127.0.0.1:8080/health
 
 Default behavior is the recommended path. Use overrides only when you need them.
 
-Inside the repo, before running `./setup.sh`:
+Inside the repo, before running `./build.sh`:
 
 ```bash
 # Skip local llama backend compilation
-BUILD_LOCAL_LLAMA_BACKEND=0 ./setup.sh
+BUILD_LOCAL_LLAMA_BACKEND=0 ./build.sh
 
 # Force local backend rebuild even if an existing one is usable
-FORCE_REBUILD_LLAMA_BACKEND=1 ./setup.sh
+FORCE_REBUILD_LLAMA_BACKEND=1 ./build.sh
 
 # Embed local GGUF models into the ISO
-INCLUDE_MODELS_IN_ISO=1 ./setup.sh
+INCLUDE_MODELS_IN_ISO=1 ./build.sh
 
 # Fail if staged cleanup cannot complete
-STRICT_STAGING_CLEAN=1 ./setup.sh
+STRICT_STAGING_CLEAN=1 ./build.sh
 ```
 
 ## Step 13: Troubleshooting
@@ -400,6 +411,45 @@ sudo dd if="$ISO" of=/dev/sdX bs=4M status=progress oflag=sync
 
 Replace `/dev/sdX` with the correct target device.
 
+## Advanced: Persistent Build Container Workflow
+
+If you plan to develop and rebuild the ISO frequently across PC reboots, the ephemeral (`--rm`) container approach in Step 4 forces you to re-download all build dependencies every time. Instead, you can create a **persistent build container**.
+
+### 1. Create the Persistent Container (One Time Only)
+
+Run this command **without** the `--rm` flag. This creates a persistent container named `jarvis-build` saved to your hard drive:
+
+```bash
+sudo podman run -it --privileged --network host --name jarvis-build \
+  -v "$(pwd)":/root/jarvis-os \
+  -v ~/jarvis-output:/root/jarvis-out \
+  archlinux:latest
+```
+
+Inside the container, install the dependencies once:
+```bash
+pacman -Sy --noconfirm
+pacman -S --noconfirm archiso base-devel git cmake rsync
+```
+
+You can now build your ISO as normal and type `exit` when done.
+
+### 2. Resuming Work (After Reboot or Exit)
+
+If you restart your PC or exit the container, **do not** run the `podman run` command again. The container still exists!
+
+Simply wake it up and drop back into it by running:
+```bash
+sudo podman start -ai jarvis-build
+```
+
+You are instantly back inside with all packages perfectly preserved. You can immediately run `./build.sh` and `mkarchiso` without running `pacman` again.
+
+### What NOT to do:
+- **Do not run `sudo podman rm -f jarvis-build`** unless you intentionally want to destroy your persistent environment.
+- **Do not use `--rm`** when originally starting the container.
+- **Do not use `podman run` to resume.** `run` creates a *new* container from scratch. Always use `podman start -ai jarvis-build` to resume your existing one.
+
 ## One-Block Summary
 
 If you already understand the process and just want the shortest working path:
@@ -426,9 +476,9 @@ Then inside the container:
 pacman -Sy --noconfirm
 pacman -S --noconfirm archiso base-devel git cmake rsync
 cd /root/jarvis-os
-chmod +x setup.sh
-./setup.sh
-cd /root/jarvis-os/iso-profile
+chmod +x build.sh
+./build.sh
+cd /root/jarvis-os/code/iso-profile
 mkarchiso -v -w /root/jarvis-work -o /root/jarvis-out .
 exit
 ```

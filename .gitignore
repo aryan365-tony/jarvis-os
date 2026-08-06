@@ -1,40 +1,29 @@
-# Build outputs
-*.iso
-jarvis-work/
-jarvis-out/
-
-# Models (keep placeholder only)
-*.gguf
-llama/models/*
-!llama/models/.gitkeep
-
-# Local backend build artifacts
-llama/cpu/
-llama/gpu/
-llama/vendor/
-kernel/last-build.log
-
-# Regenerated ISO staging artifacts
-# setup.sh rsyncs the whole repo into the live airootfs and stages the compiled
-# llama backend under /usr/local/lib. These are fully regenerated at build time
-# and must never be committed.
-iso-profile/airootfs/home/jarvisuser/dev/jarvis-os/
-iso-profile/airootfs/usr/local/lib/
-
-# Python
-__pycache__/
+**/__pycache__/
 *.pyc
-*.pyo
-*.pyd
-*.egg-info/
-.Python
-env/
-venv/
+**/*.egg-info/
 .venv/
-pip-log.txt
-pip-delete-this-directory.txt
+jarvis-shell/.venv/
 
-# Misc
-.DS_Store
-Thumbs.db
-graphify-out/
+# Graphify generated outputs (keep GRAPH_REPORT.md)
+graphify-out/cache/
+graphify-out/graph.json
+graphify-out/graph.html
+graphify-out/manifest.json
+graphify-out/.graphify_analysis.json
+graphify-out/.graphify_labels.json
+graphify-out/.graphify_labels.json.sig
+graphify-out/.graphify_root
+
+# Vendored binaries (live in build-assets/, gitignored there)
+build-assets/llama-runtime/**/*.so*
+build-assets/llama-runtime/**/server-cpu
+build-assets/llama-runtime/**/server-gpu
+
+# Models
+build-assets/models/*.gguf
+
+# Build outputs
+dist/
+jarvis-os-code.zip
+jarvis-os-src.zip
+.trash-*

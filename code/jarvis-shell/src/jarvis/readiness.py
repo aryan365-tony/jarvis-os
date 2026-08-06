@@ -35,7 +35,10 @@ class ReadinessService:
         if self._cfg.llm.mode == "remote":
             self._desired_online = True
         else:
-            self._desired_online = self._cfg.boot.model_auto_start or self._cfg.llm.mode == "local"
+            # `mode == "local"` is always true in this branch (the sibling
+            # `if` above already handles "remote"), so `X or mode=="local"`
+            # collapsed to always-True and silently ignored model_auto_start.
+            self._desired_online = self._cfg.boot.model_auto_start
 
         self._state = (
             ServiceState.INITIALIZING

@@ -1,4 +1,5 @@
 import QtQuick
+import ".."
 
 /**
  * VoiceOrb.qml — the central voice presence (Phase 5).

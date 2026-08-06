@@ -17,6 +17,7 @@ dependencies = [
     # tomllib is stdlib on 3.11+; tomli is a fallback for older interpreters.
     "tomli>=2.0; python_version < '3.11'",
     "playwright>=1.40",
+    "caldav>=1.3",
 ]
 
 [project.optional-dependencies]

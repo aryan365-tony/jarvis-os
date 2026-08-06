@@ -8,3 +8,11 @@ from . import diagnostics
 from . import display_control
 from . import snapshot
 from . import audit_review
+from . import introspect
+from . import network_ctl
+from . import bluetooth_ctl
+from . import power_ctl
+from . import media_ctl
+from . import notify
+from . import voice_ctl
+from . import scheduler

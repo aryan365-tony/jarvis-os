@@ -17,6 +17,9 @@ iwd
 wpa_supplicant
 systemd-resolvconf
 openssh
+networkmanager
+bluez
+bluez-utils
 
 # --- Graphics stack (software + AMD/Intel; cage needs a GL/KMS device) ---
 mesa
@@ -64,3 +67,6 @@ portaudio
 python-numpy
 brightnessctl
 dialog
+playerctl
+upower
+libnotify

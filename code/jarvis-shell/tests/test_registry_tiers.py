@@ -1,9 +1,14 @@
-"""Phase 2: registry tier migration, budgets, and snapshot-linked approval."""
+"""Registry: tier registration, legacy alias mapping, and basic execute path.
+
+Budget / per-tool ceiling / approval-gate tests removed — those features were
+stripped in the guardrail-removal pass.  ApprovalResult no longer exists in
+the registry module.
+"""
 
 import pytest
 
 from jarvis.tools import registry
-from jarvis.tools.registry import ApprovalResult, execute, get_risk_tier, register
+from jarvis.tools.registry import execute, get_risk_tier, register
 
 
 @pytest.fixture(autouse=True)
@@ -33,53 +38,17 @@ def test_invalid_tier_rejected_at_registration():
         register("bad", risk="catastrophic")(lambda: "x")
 
 
-async def test_high_tier_denied_without_approver():
-    register("danger", risk="high")(lambda: "did it")
-    out = await execute("danger", {}, confirm=None)
-    assert out.startswith("denied")
+async def test_tool_executes_and_returns_result():
+    register("simple_op", risk="low")(lambda: "hello")
+    assert await execute("simple_op", {}) == "hello"
 
 
-async def test_high_tier_runs_and_threads_snapshot_id():
-    seen = {}
-
-    @register("danger2", risk="high")
-    def danger2():
-        return "boom"
-
-    async def approver(name, args):
-        return ApprovalResult(approved=True, snapshot_id="snap-42")
-
-    def capture(event, payload):
-        if event == "tool_call_ok":
-            seen.update(payload)
-
-    registry.audit_log = capture  # type: ignore[assignment]
-    out = await execute("danger2", {}, confirm=approver)
-    assert out == "boom"
-    assert seen.get("snapshot_id") == "snap-42"
+async def test_unknown_tool_returns_error():
+    out = await execute("no_such_tool_xyz", {})
+    assert "unknown tool" in out
 
 
-async def test_low_tier_runs_without_confirm():
-    register("safe_op", risk="low")(lambda: "ok")
-    assert await execute("safe_op", {}, confirm=None) == "ok"
-
-
-async def test_per_tool_budget_enforced():
-    register("countme", risk="low", max_calls_per_turn=2)(lambda: "ok")
-    counts: dict[str, int] = {}
-    assert await execute("countme", {}, call_counts=counts) == "ok"
-    assert await execute("countme", {}, call_counts=counts) == "ok"
-    out = await execute("countme", {}, call_counts=counts)
-    assert "budget exceeded" in out
-
-
-async def test_global_per_turn_ceiling(monkeypatch):
-    monkeypatch.setattr(registry, "PER_TURN_TOOL_BUDGET", 3)
-    for i in range(5):
-        register(f"t{i}", risk="low", max_calls_per_turn=99)(lambda: "ok")
-    counts: dict[str, int] = {}
-    assert await execute("t0", {}, call_counts=counts) == "ok"
-    assert await execute("t1", {}, call_counts=counts) == "ok"
-    assert await execute("t2", {}, call_counts=counts) == "ok"
-    out = await execute("t3", {}, call_counts=counts)
-    assert "per-turn tool budget" in out
+async def test_high_tier_executes_unconditionally():
+    """After guardrail removal, high-tier tools run with no approval step."""
+    register("danger_free", risk="high")(lambda: "ran")
+    assert await execute("danger_free", {}) == "ran"

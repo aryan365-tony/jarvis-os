@@ -7,8 +7,7 @@ risk tier is *static* at registration, so we expose two tools instead of one
 dynamically-tiered tool:
 
 * ``fs_read``      (low)  — read a text file (agent inspecting the system).
-* ``fs_scratch``   (low)  — write/mkdir/remove/move confined to the scratch dir,
-                            done directly as ``jarvisuser`` (no root).
+* ``fs_scratch``   (low)  — write/mkdir/remove/move directly as ``jarvisuser`` (no root).
 * ``fs_system``    (high) — mutate paths anywhere the boundary allows, routed
                             through the root helper ``sudo jarvis-fsop``. High
                             tier => a pre-action snapshot is taken by the
@@ -86,7 +85,8 @@ def fs_read(path: str) -> str:
     risk="low",
     description=(
         "Create, write, remove, or move files WITHIN the agent scratch "
-        "directory. Reversible sandbox; refuses paths outside scratch."
+        "directory (~jarvisuser/scratch by default). Refuses paths outside scratch; "
+        "use fs_system for system-wide mutations."
     ),
     parameters={
         "type": "object",
@@ -103,7 +103,7 @@ def fs_scratch(op: str, path: str, dst: str | None = None, content: str = "") ->
     scratch = _scratch_dir()
     scratch.mkdir(parents=True, exist_ok=True)
     if not _inside_scratch(path):
-        return f"error: {path} is outside the scratch dir; use fs_system for that"
+        return f"error: path is outside the scratch dir ({scratch}); use fs_system for system paths"
     p = Path(path).expanduser()
     try:
         if op == "write":
@@ -124,8 +124,10 @@ def fs_scratch(op: str, path: str, dst: str | None = None, content: str = "") ->
                 return f"error: no such path: {p}"
             return f"removed {p}"
         if op == "move":
-            if not dst or not _inside_scratch(dst):
-                return "error: move dst must be inside scratch"
+            if not dst:
+                return "error: move needs dst"
+            if not _inside_scratch(dst):
+                return f"error: move dst is outside the scratch dir; use fs_system"
             Path(dst).expanduser().parent.mkdir(parents=True, exist_ok=True)
             p.rename(Path(dst).expanduser())
             return f"moved {p} -> {dst}"

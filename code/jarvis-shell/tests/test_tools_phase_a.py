@@ -41,10 +41,8 @@ def test_bluetooth_ctl(monkeypatch):
 def test_power_ctl(monkeypatch):
     captured = {}
     monkeypatch.setattr(subprocess, "run", lambda args, **k: captured.__setitem__("args", args) or _fake_completed())
-    
-    assert "error" in power_ctl.power_suspend("wrong phrase")
-    
-    power_ctl.power_suspend("I understand this will suspend the system")
+
+    power_ctl.power_suspend()
     assert captured["args"] == ["sudo", "-n", "systemctl", "suspend"]
 
 

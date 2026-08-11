@@ -132,11 +132,21 @@ class Database:
             self._conn.commit()
         return applied
 
-    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def execute(self, sql: str, params: tuple = (), commit: bool = True) -> sqlite3.Cursor:
+        """Run one statement. BUG-013: every call previously committed
+        (forcing a WAL fsync) even for high-frequency, non-critical writes
+        like session_log inserts. ``commit=False`` lets a caller batch
+        several writes under one fsync via :meth:`commit`; the default
+        preserves prior behavior for every existing call site."""
         with self._lock:
             cur = self._conn.execute(sql, params)
-            self._conn.commit()
+            if commit:
+                self._conn.commit()
             return cur
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -150,6 +160,11 @@ class Database:
         back into the main database file.
         """
         with self._lock:
+            # Commit first: batched writers (BUG-013, e.g. session_log) may
+            # have an open transaction on this connection. Checkpointing
+            # before committing would checkpoint around it instead of
+            # folding it in.
+            self._conn.commit()
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._conn.commit()
 
@@ -165,7 +180,9 @@ class Database:
         with self._lock:
             # Fold the WAL back before closing so a subsequent open is clean.
             try:
+                self._conn.commit()
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._conn.commit()
             except sqlite3.Error:
                 pass
             self._conn.close()
@@ -174,17 +191,25 @@ class Database:
 # Lazy process-wide singleton, built from config on first use so that modules
 # which still import at top level keep working during the transition.
 _db: Database | None = None
+_db_init_lock = threading.Lock()
 
 
 def get_db() -> Database:
     global _db
     if _db is None:
-        from .config import get_config
+        # RISK-007: check-then-set was not thread-safe — two threads racing
+        # here could each construct a Database and each run migrate(),
+        # applying migrations twice. Guard construction with a lock; the
+        # (cheap) None-check outside the lock avoids taking it on every call.
+        with _db_init_lock:
+            if _db is None:
+                from .config import get_config
 
-        cfg = get_config().memory
-        key = _load_or_create_key(cfg.key_path) if cfg.encrypt_at_rest else None
-        _db = Database(cfg.db_path, key=key)
-        _db.migrate()
+                cfg = get_config().memory
+                key = _load_or_create_key(cfg.key_path) if cfg.encrypt_at_rest else None
+                db = Database(cfg.db_path, key=key)
+                db.migrate()
+                _db = db
     return _db
 
 

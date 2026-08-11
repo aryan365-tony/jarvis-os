@@ -93,13 +93,36 @@ def main() -> int:
         loop.call_soon(bridge.start)
 
     # Graceful shutdown on SIGTERM/SIGINT (systemd sends SIGTERM).
+    # BUG-009: app.quit() must not fire until bridge.shutdown() (DB
+    # checkpoint, subprocess teardown) has actually finished, or Qt can tear
+    # down the event loop mid-shutdown and leave the WAL uncheckpointed.
+    # loop.call_soon_threadsafe is also the documented-safe way to schedule
+    # loop work from a signal handler.
+    async def _do_shutdown():
+        try:
+            await bridge.shutdown()
+        finally:
+            app.quit()
+
     def _shutdown_handler(*_):
         if loop is not None:
-            loop.create_task(bridge.shutdown())
-        app.quit()
+            loop.call_soon_threadsafe(lambda: loop.create_task(_do_shutdown()))
+        else:
+            app.quit()
 
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
+
+    # RISK-006: SIGHUP reloads config from disk without a full restart.
+    def _reload_handler(*_):
+        from .config import reload_config
+        try:
+            reload_config()
+            log.info("config reloaded from disk")
+        except Exception:
+            log.exception("config reload failed")
+
+    signal.signal(signal.SIGHUP, _reload_handler)
 
     if loop is None:
         app.exec()

@@ -13,16 +13,23 @@ from __future__ import annotations
 
 import logging
 
+import asyncio
+
 from .audit.chain import audit_log, set_audit_bus, verify_chain_detailed
 from .config import Config, get_config
 from .db import get_db
 from .eventbus import EventBus
 from .events import DURABLE_TOPICS, LOG, NOTIFY, Level, LogLine, Notification
+from .memory import store
 from .readiness import ReadinessService
 from .supervisor import Supervisor
 from .voice import VoiceService
 
 log = logging.getLogger("jarvis.runtime")
+
+# BUG-003 / RISK-002: session_log and the WAL file grow unbounded without
+# periodic maintenance. Prune and checkpoint on this interval.
+MAINTENANCE_INTERVAL_S = 3600
 
 
 class Runtime:
@@ -41,8 +48,9 @@ class Runtime:
         self.supervisor = Supervisor()
         # Background loops run supervised: a crash restarts them with backoff and
         # surfaces persistent failures to the audit log rather than looping.
-        self.supervisor.supervise("readiness", self.readiness.run)
-        self.supervisor.supervise("voice", self.voice.run)
+        self.supervisor.supervise("readiness", self.readiness.run, notify_fn=self._on_task_gave_up)
+        self.supervisor.supervise("voice", self.voice.run, notify_fn=self._on_task_gave_up)
+        self.supervisor.supervise("db_maintenance", self._maintenance_loop)
         # Agent's confirm/task callbacks are wired by the UI (it owns the
         # dialogs), so it is created there with UI-bound callbacks.
 
@@ -78,7 +86,41 @@ class Runtime:
             LogLine("audit", Level.WARNING, f"audit chain broken at entry {broken_id}"),
         )
 
+    def _on_task_gave_up(self, name: str, failures: int) -> None:
+        """RISK-005: previously a give-up was audit-logged only — nothing
+        told the person using the shell that a subsystem had gone
+        permanently silent. Surface it as a real notification too."""
+        self.bus.publish(
+            NOTIFY,
+            Notification(
+                title=f"{name} is not responding",
+                body=(
+                    f"Background service '{name}' crashed {failures} times and "
+                    "stopped; it will retry automatically in a few minutes."
+                ),
+                level=Level.WARNING,
+            ),
+        )
+
+    async def _maintenance_loop(self) -> None:
+        """Periodic session_log pruning + WAL checkpoint (BUG-003, RISK-002)."""
+        while True:
+            await asyncio.sleep(MAINTENANCE_INTERVAL_S)
+            try:
+                await asyncio.to_thread(store.prune_session)
+                await asyncio.to_thread(self.db.checkpoint)
+            except Exception:
+                log.exception("db maintenance cycle failed")
+
     async def shutdown(self) -> None:
+        # BUG-004 (audit) claimed this double-stops readiness/voice. Verified
+        # incorrect: readiness/voice `_task` is only set by their own
+        # `start()`, never by the Supervisor path used here, so
+        # `supervisor.stop_all()` cancels the polling coroutine but never
+        # calls `_stop_server_process()` / mic teardown. `readiness.stop()`
+        # and `voice.stop()` below are the only calls that actually perform
+        # that cleanup; removing them would leave llama-server running after
+        # shutdown. Kept as-is; no change needed.
         await self.supervisor.stop_all()
         await self.readiness.stop()
         await self.voice.stop()

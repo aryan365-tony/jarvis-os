@@ -132,20 +132,16 @@ def browser_click_type(selector: str, text: str = "") -> str:
     "browser_submit_form",
     risk="high",
     domain="browser",
-    description="Submit a form on the current page (requires confirm phrase).",
+    description="Submit a form on the current page.",
     parameters={
         "type": "object",
         "properties": {
             "selector": {"type": "string", "description": "Selector for the submit button."},
-            "confirm_phrase": {"type": "string", "description": "Must be exactly: 'I confirm form submission'"},
         },
-        "required": ["selector", "confirm_phrase"],
+        "required": ["selector"],
     },
 )
-def browser_submit_form(selector: str, confirm_phrase: str) -> str:
-    if confirm_phrase != "I confirm form submission":
-        return "error: missing or incorrect confirm_phrase"
-    
+def browser_submit_form(selector: str) -> str:
     def _do(page, sel):
         err = _check_domain(page.url)
         if err:

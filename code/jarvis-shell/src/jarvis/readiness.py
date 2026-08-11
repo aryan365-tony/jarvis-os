@@ -46,14 +46,16 @@ class ReadinessService:
             else ServiceState.UNAVAILABLE
         )
         self._task: asyncio.Task | None = None
-        self._model_dir = Path(__file__).resolve().parents[3] / "llama" / "models"
-        self._download_script = (
-            Path(__file__).resolve().parents[3] / "llama" / "download-model.sh"
-        )
-        self._server_script = (
-            Path(__file__).resolve().parents[3] / "llama" / "serve.sh"
-        )
+        from .paths import llama_dir
+        self._model_dir = llama_dir() / "models"
+        self._download_script = llama_dir() / "download-model.sh"
+        self._server_script = llama_dir() / "serve.sh"
         self._online_since = 0.0
+        # BUG-007: without this, _start_server_process() (a systemctl
+        # start + is-active round trip) ran on every poll cycle even while
+        # already running. Track confirmed-started state and only restart
+        # on first start or after a real failure.
+        self._server_started = False
 
     def _any_model_path(self) -> Path | None:
         for p in sorted(self._model_dir.glob("*.gguf")):
@@ -137,6 +139,7 @@ class ReadinessService:
                 return False
 
             self._online_since = time.monotonic()
+            self._server_started = True
             return True
         except Exception as e:
             self._emit(ServiceState.ERROR, f"failed to spawn backend: {e}")
@@ -180,6 +183,7 @@ class ReadinessService:
         return True
 
     async def _stop_server_process(self) -> None:
+        self._server_started = False
         if self._cfg.llm.mode == "remote":
             return
         try:
@@ -215,9 +219,10 @@ class ReadinessService:
                     await asyncio.sleep(cfg.boot.health_poll_interval_s)
                     continue
 
-                if not await self._start_server_process():
-                    await asyncio.sleep(cfg.boot.health_poll_interval_s)
-                    continue
+                if not self._server_started:
+                    if not await self._start_server_process():
+                        await asyncio.sleep(cfg.boot.health_poll_interval_s)
+                        continue
 
                 try:
                     headers = {}
@@ -241,6 +246,9 @@ class ReadinessService:
                         and time.monotonic() - self._online_since > cfg.boot.model_ready_timeout_s
                     ):
                         self._emit(ServiceState.DEGRADED, "model taking longer than expected")
+                        # Genuinely stuck past the grace period: allow a
+                        # fresh start attempt instead of polling forever.
+                        self._server_started = False
                     elif self._state == ServiceState.READY:
                         # Was healthy, now failing: server likely restarting.
                         self._emit(ServiceState.INITIALIZING, "reconnecting")

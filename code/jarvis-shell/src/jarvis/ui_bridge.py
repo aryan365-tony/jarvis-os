@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from PyQt6.QtCore import (
@@ -45,8 +46,7 @@ from .events import (
 )
 from .memory import store
 from .runtime import Runtime
-from .tools.registry import ApprovalResult, get_risk_tier
-from .tools.snapshot import create_pre_action_snapshot
+from .tools.registry import get_risk_tier
 
 log = logging.getLogger("jarvis.bridge")
 
@@ -94,15 +94,14 @@ class JarvisBridge(QObject):
     def start(self) -> None:
         """Called once after the QML engine is loaded. Kicks off all services."""
         self._agent = ConversationAgent(
-            confirm=self.request_tool_approval,
             on_task=self._on_task,
         )
         # Voice and text share this one agent: route voice transcripts through
         # the same turn, echoing them into the conversation view + token stream.
         self._runtime.voice.set_agent_turn(self._voice_agent_turn)
         self._runtime.start_background()
-        self._pump_task = asyncio.ensure_future(self._pump())
-        self._clock_task = asyncio.ensure_future(self._clock_loop())
+        self._pump_task = asyncio.create_task(self._pump())
+        self._clock_task = asyncio.create_task(self._clock_loop())
         log.info("bridge started, background services launched")
 
     async def shutdown(self) -> None:
@@ -122,7 +121,7 @@ class JarvisBridge(QObject):
         if not text:
             return
         self.conversationAppended.emit("user", text)
-        asyncio.ensure_future(self._handle_user(text))
+        asyncio.create_task(self._handle_user(text))
 
     @pyqtSlot(result=bool)
     def isOnboarded(self) -> bool:
@@ -193,57 +192,11 @@ class JarvisBridge(QObject):
 
     async def _clock_loop(self) -> None:
         """Emit time every second for the HUD clock."""
-        from datetime import datetime
         while True:
             self.clockTick.emit(datetime.now().strftime("%H:%M"))
             await asyncio.sleep(1.0)
 
-    # ── Tool approval (Phase 3: collapsed approval + snapshot safety net) ─
-    async def request_tool_approval(self, name: str, args: dict) -> ApprovalResult:
-        """Approve a tool call, tiered by risk.
 
-        Autonomy model: the agent is trusted to *act*, and recoverability — not
-        a human click — is the safety mechanism. So:
-
-        * ``low`` / ``medium`` — approved instantly, no snapshot, no prompt.
-        * ``high``             — take a pre-action snapper snapshot FIRST, log a
-                                 high-risk audit entry, then approve. The
-                                 snapshot id is threaded back through
-                                 :class:`ApprovalResult` so the audit entry and
-                                 ``ops/rollback.sh`` can undo exactly this change.
-
-        If the snapshot cannot be taken, the high-risk action is DENIED — no
-        irreversible change is ever allowed to run without its safety net.
-        """
-        try:
-            tier = get_risk_tier(name)
-        except KeyError:
-            tier = "high"  # unknown -> most cautious
-
-        if tier in ("low", "medium"):
-            return ApprovalResult(approved=True)
-
-        # high tier
-        snap_id = await asyncio.to_thread(
-            create_pre_action_snapshot, f"pre-action: {name} {args}"
-        )
-        if snap_id is None:
-            audit_log(
-                "high_risk_action_denied",
-                {"tool": name, "args": args, "reason": "snapshot_unavailable"},
-            )
-            log.error("high-risk tool %s denied: could not take pre-action snapshot", name)
-            return ApprovalResult(approved=False)
-
-        audit_log(
-            "high_risk_action",
-            {"tool": name, "args": args, "snapshot_id": snap_id},
-        )
-        self._runtime.bus.publish(
-            LOG,
-            LogLine("tool", Level.WARNING, f"high-risk {name} (snapshot #{snap_id})"),
-        )
-        return ApprovalResult(approved=True, snapshot_id=snap_id)
 
     # ── Voice <-> shared agent bridge (Phase 5) ─────────────────────────
     async def _voice_agent_turn(self, transcript: str, on_token):

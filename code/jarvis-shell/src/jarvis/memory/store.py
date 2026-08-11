@@ -14,6 +14,16 @@ import time
 
 from ..db import get_db
 
+# BUG-013: session_log writes are frequent (every user/assistant/tool
+# message) but not safety-critical the way audit_log is. Committing (and
+# fsyncing the WAL) on every single insert added ~2 commits/turn on top of
+# audit_log's own commits. Batch every N writes instead, bounding the
+# at-most-lost-on-crash window to a handful of recent turns rather than
+# eliminating durability. core_memory writes stay commit=True (rare, and
+# each one matters).
+_SESSION_FLUSH_EVERY = 20
+_uncommitted_writes = 0
+
 
 def load_core_memory() -> dict[str, str]:
     try:
@@ -34,9 +44,25 @@ def set_core_memory(key: str, value: str) -> None:
 
 
 def append_session(role: str, content: str) -> None:
-    get_db().execute(
+    global _uncommitted_writes
+    db = get_db()
+    _uncommitted_writes += 1
+    flush = _uncommitted_writes >= _SESSION_FLUSH_EVERY
+    db.execute(
         "INSERT INTO session_log (role, content, ts) VALUES (?,?,?)",
         (role, content, time.time()),
+        commit=flush,
+    )
+    if flush:
+        _uncommitted_writes = 0
+
+
+def prune_session(keep: int = 5000) -> None:
+    """Drop old session_log rows beyond ``keep`` (BUG-003: unbounded growth)."""
+    get_db().execute(
+        "DELETE FROM session_log WHERE id NOT IN "
+        "(SELECT id FROM session_log ORDER BY id DESC LIMIT ?)",
+        (keep,),
     )
 
 

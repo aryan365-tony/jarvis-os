@@ -116,7 +116,13 @@ class VoicePipeline:
         token_q: "asyncio.Queue[str | None]" = asyncio.Queue()
         spoke_first = asyncio.Event()
 
+        speak_task: asyncio.Task | None = None
+
         async def on_token(tok: str) -> None:
+            # If speech was already cancelled (barge-in) mid-turn, stop
+            # feeding the queue — nothing is left to consume it (BUG-006).
+            if speak_task is not None and speak_task.done():
+                return
             if not spoke_first.is_set():
                 spoke_first.set()
                 self._activity(VoicePhase.SPEAKING)
@@ -126,7 +132,15 @@ class VoicePipeline:
         try:
             await self._agent_turn(transcript, on_token)
         finally:
-            await token_q.put(None)  # sentinel: end of stream
+            # BUG-006: if speak_task was already cancelled (barge-in) or
+            # exits early, nobody drains token_q — an unbounded queue that
+            # on_token keeps feeding for the rest of the (still-streaming)
+            # agent turn. Stop feeding it and drain any leftovers here.
+            if speak_task.done():
+                while not token_q.empty():
+                    token_q.get_nowait()
+            else:
+                await token_q.put(None)  # sentinel: end of stream
 
         # 4) Wait for speech to finish OR a barge-in to cut it short.
         while not speak_task.done():

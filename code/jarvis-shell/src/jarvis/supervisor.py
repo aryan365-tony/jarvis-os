@@ -31,10 +31,22 @@ from .audit.chain import audit_log
 log = logging.getLogger("jarvis.supervisor")
 
 CoroFactory = Callable[[], Awaitable[None]]
+# Called as notify_fn(task_name, failures) when a task gives up (and again on
+# every subsequent give-up after a cool-down retry fails).
+NotifyFn = Callable[[str, int], None]
 
 
 class SupervisedTask:
-    """Runs ``factory()`` under restart-with-backoff supervision."""
+    """Runs ``factory()`` under restart-with-backoff supervision.
+
+    RISK-005: a task that hit ``max_restarts`` used to be dead for the rest
+    of the process — no further retries, no visible notification, the shell
+    just silently ran with a permanently broken subsystem. Now, after giving
+    up, it waits ``giveup_cooldown_s`` and tries again exactly once; a run
+    that stays healthy past ``healthy_after_s`` clears the give-up state and
+    resumes normal supervision, otherwise it gives up again and repeats the
+    cool-down cycle (bounded retry, not a tight crash loop).
+    """
 
     def __init__(
         self,
@@ -45,6 +57,8 @@ class SupervisedTask:
         max_backoff_s: float = 60.0,
         max_restarts: int = 8,
         healthy_after_s: float = 30.0,
+        giveup_cooldown_s: float = 600.0,
+        notify_fn: NotifyFn | None = None,
     ) -> None:
         self.name = name
         self._factory = factory
@@ -52,7 +66,10 @@ class SupervisedTask:
         self._max_backoff_s = max_backoff_s
         self._max_restarts = max_restarts
         self._healthy_after_s = healthy_after_s
+        self._giveup_cooldown_s = giveup_cooldown_s
+        self._notify_fn = notify_fn
         self._task: asyncio.Task | None = None
+        self._recovery_task: asyncio.Task | None = None
         self._failures = 0
         self._gave_up = False
 
@@ -69,6 +86,13 @@ class SupervisedTask:
             self._task = asyncio.create_task(self._run(), name=f"supervise:{self.name}")
 
     async def stop(self) -> None:
+        if self._recovery_task:
+            self._recovery_task.cancel()
+            try:
+                await self._recovery_task
+            except asyncio.CancelledError:
+                pass
+            self._recovery_task = None
         if self._task:
             self._task.cancel()
             try:
@@ -115,11 +139,29 @@ class SupervisedTask:
                         {"task": self.name, "failures": self._failures},
                     )
                     log.error(
-                        "supervised task %s exceeded restart cap (%d); giving up",
-                        self.name, self._max_restarts,
+                        "supervised task %s exceeded restart cap (%d); "
+                        "giving up, will retry once after %.0fs",
+                        self.name, self._max_restarts, self._giveup_cooldown_s,
                     )
+                    if self._notify_fn is not None:
+                        try:
+                            self._notify_fn(self.name, self._failures)
+                        except Exception:
+                            log.exception("supervisor notify_fn failed for %s", self.name)
+                    # Schedule one bounded recovery attempt after a cool-down
+                    # instead of dying for the life of the process, but let
+                    # this task instance finish now (it is "done", same as
+                    # the old give-up contract) — a fresh SupervisedTask.start()
+                    # is what actually resumes supervision.
+                    self._recovery_task = asyncio.create_task(self._schedule_recovery())
                     return
                 await asyncio.sleep(self._backoff())
+
+    async def _schedule_recovery(self) -> None:
+        await asyncio.sleep(self._giveup_cooldown_s)
+        self._failures = 0
+        self._gave_up = False
+        self.start()
 
 
 class Supervisor:

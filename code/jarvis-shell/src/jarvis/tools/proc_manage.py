@@ -75,8 +75,18 @@ def proc_kill(pid: int, signal: str = "TERM") -> str:
         return "error: psutil not available"
     if pid <= 1:
         return "error: refusing to signal pid <= 1 (init)"
-    if pid == os.getpid() or pid == os.getpgrp():
+    if pid == os.getpid():
         return "error: refusing to signal the shell's own process"
+    try:
+        # BUG-012: `pid == os.getpgrp()` compared a PID to a PGID — wrong
+        # boundary (blocks an unrelated process that happens to share that
+        # numeric id, while not actually blocking other members of our own
+        # process group). The correct check is the *target's* PGID against
+        # ours.
+        if os.getpgid(pid) == os.getpgrp():
+            return "error: refusing to signal process in shell's own process group"
+    except ProcessLookupError:
+        return f"error: no such process {pid}"
     sig = _SIGNALS.get(signal.upper())
     if sig is None:
         return f"error: unsupported signal {signal}"

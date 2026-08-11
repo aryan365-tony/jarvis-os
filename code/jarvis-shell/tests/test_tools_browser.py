@@ -37,9 +37,7 @@ def test_browser_tools(monkeypatch):
     
     assert browser.browser_click_type("#btn", "hello") == "ok"
     
-    assert "error" in browser.browser_submit_form("#submit", "wrong")
-    assert "Submitted" in browser.browser_submit_form("#submit", "I confirm form submission")
-    
+    assert "error" not in browser.browser_submit_form("#submit")   
     assert "Screenshot saved" in browser.browser_screenshot("/tmp/shot.png")
     
     assert browser.browser_extract_text("#content") == "inner"

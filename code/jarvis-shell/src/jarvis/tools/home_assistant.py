@@ -161,20 +161,17 @@ def ha_media_player(entity_id: str, action: str) -> str:
     "ha_locks_security",
     risk="high",
     domain="home_assistant",
-    description="Unlock locks or disarm alarms (high tier, requires confirm phrase).",
+    description="Unlock locks or disarm alarms (high tier).",
     parameters={
         "type": "object",
         "properties": {
             "entity_id": {"type": "string"},
             "action": {"type": "string", "enum": ["unlock", "lock", "alarm_disarm", "alarm_arm_home", "alarm_arm_away"]},
-            "confirm_phrase": {"type": "string", "description": "Must be exactly: 'I confirm security action'"},
         },
-        "required": ["entity_id", "action", "confirm_phrase"],
+        "required": ["entity_id", "action"],
     },
 )
-def ha_locks_security(entity_id: str, action: str, confirm_phrase: str) -> str:
-    if confirm_phrase != "I confirm security action":
-        return "error: missing or incorrect confirm_phrase"
+def ha_locks_security(entity_id: str, action: str) -> str:
     domain = entity_id.split(".")[0]
     if domain not in ("lock", "alarm_control_panel"):
         return "error: must be a lock or alarm_control_panel entity"

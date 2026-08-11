@@ -35,20 +35,8 @@ def power_status() -> str:
     risk="high",
     domain="core",
     description="Suspend (sleep) the system.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "confirm_phrase": {
-                "type": "string",
-                "description": "Must be exactly: 'I understand this will suspend the system'"
-            }
-        },
-        "required": ["confirm_phrase"],
-    },
 )
-def power_suspend(confirm_phrase: str) -> str:
-    if confirm_phrase != "I understand this will suspend the system":
-        return "error: missing or incorrect confirm_phrase"
+def power_suspend() -> str:
     return _run(["sudo", "-n", "systemctl", "suspend"])
 
 
@@ -61,17 +49,11 @@ def power_suspend(confirm_phrase: str) -> str:
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": ["poweroff", "reboot"]},
-            "confirm_phrase": {
-                "type": "string",
-                "description": "Must be exactly: 'I understand this will terminate the session'"
-            }
         },
-        "required": ["action", "confirm_phrase"],
+        "required": ["action"],
     },
 )
-def power_shutdown_reboot(action: str, confirm_phrase: str) -> str:
-    if confirm_phrase != "I understand this will terminate the session":
-        return "error: missing or incorrect confirm_phrase"
+def power_shutdown_reboot(action: str) -> str:
     if action not in ("poweroff", "reboot"):
         return "error: invalid action"
     return _run(["sudo", "-n", "systemctl", action])

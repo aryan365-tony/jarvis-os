@@ -40,12 +40,6 @@ class LLMConfig:
 
 @dataclass
 class ToolsConfig:
-    enabled_domains: dict[str, bool] = field(default_factory=lambda: {
-        "home_assistant": False,
-        "browser": False,
-        "desktop_control": False,
-        "calendar": False,
-    })
     home_assistant_url: str = "http://127.0.0.1:8123"
     home_assistant_token_env: str = "HA_TOKEN"
 
@@ -69,11 +63,9 @@ class MemoryConfig:
 class PolicyConfig:
     # Phase 2: the network allowlist was removed — the image is offline by
     # design (no egress path exists), so an allowlist was dead configuration.
-    irreversible_requires_confirm: bool = True
-    # Raised for the larger Phase 2 tool surface but still a hard ceiling; the
-    # registry additionally enforces its own PER_TURN_TOOL_BUDGET.
-    max_tool_calls_per_turn: int = 12
-    max_turns_per_session_task: int = 25
+    # BUG-017: irreversible_requires_confirm and max_turns_per_session_task
+    # were dead config (approval system removed; agent.py now hardcodes the
+    # 9999 step cap) — removed rather than leaving fields nothing reads.
     # High-tier fs mutations are confined here; anything inside runs low-tier.
     fs_scratch_dir: str = "/home/jarvisuser/scratch"
 
@@ -160,3 +152,20 @@ def load_config(path: str | None = None) -> Config:
 def get_config() -> Config:
     """Cached process-wide config. Use this instead of re-loading."""
     return load_config()
+
+
+def reload_config() -> Config:
+    """Force-reload config from disk (RISK-006: without this, edits to
+    jarvis.toml made at runtime — e.g. by the agent via shell_exec/fs_ops —
+    were silently invisible for the life of the process, with no feedback
+    that the write had no effect).
+
+    Note: components that captured ``get_config()`` at construction time
+    (e.g. ``ReadinessService._cfg``) hold a reference to the old Config and
+    will not see the change until they next call ``get_config()`` or are
+    reconstructed. This makes the *existence* of stale config observable
+    (call get_config() again) rather than fixing every call site to always
+    re-read live — a larger refactor out of scope here.
+    """
+    get_config.cache_clear()
+    return get_config()

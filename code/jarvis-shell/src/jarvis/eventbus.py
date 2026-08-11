@@ -143,6 +143,13 @@ def _put_dropping_oldest(queue: asyncio.Queue, item: Any) -> None:
 
     Dropping the oldest keeps the UI current (latest state wins) rather than
     stalling producers — the right trade-off for status/telemetry streams.
+
+    BUG-014 (audit) worried two concurrent producers could each observe
+    ``full()`` and both drop, losing two items. Verified not reproducible:
+    this function has no ``await`` between the check and the puts, so on a
+    single-threaded asyncio event loop it cannot be interrupted by another
+    task — it always runs as one atomic step. Only relevant if ever called
+    from multiple OS threads sharing one loop, which nothing here does.
     """
     if queue.full():
         try:

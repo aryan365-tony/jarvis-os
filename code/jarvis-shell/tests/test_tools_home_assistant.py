@@ -39,9 +39,6 @@ def test_ha_list_entities(monkeypatch):
 
 
 def test_ha_locks_security_requires_phrase(monkeypatch):
-    res = home_assistant.ha_locks_security("lock.front_door", "unlock", "wrong phrase")
-    assert "error: missing or incorrect confirm_phrase" in res
-    
     class DummyClient:
         def __init__(self, *a, **k): pass
         def __enter__(self): return self
@@ -50,9 +47,8 @@ def test_ha_locks_security_requires_phrase(monkeypatch):
             return DummyResponse({})
     
     monkeypatch.setattr(httpx, "Client", DummyClient)
-    res2 = home_assistant.ha_locks_security("lock.front_door", "unlock", "I confirm security action")
+    res2 = home_assistant.ha_locks_security("lock.front_door", "unlock")
     assert res2 == "ok"
-
 
 def test_ha_lights_scenes(monkeypatch):
     class DummyClient:

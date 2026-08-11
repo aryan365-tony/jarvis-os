@@ -54,6 +54,14 @@ def _mirror_to_bus(event: str, payload: dict) -> None:
 
 
 def audit_log(event: str, payload: dict) -> None:
+    # Uses db.conn directly (not the db.execute() wrapper) intentionally:
+    # the SELECT-prev-hash + INSERT must be one atomic unit under a single
+    # db.lock acquisition, or two concurrent audit_log() calls could both
+    # read the same prev_hash and corrupt the chain. db.execute() commits
+    # (and releases nothing extra, but is a separate call) per-statement,
+    # which would not provide that atomicity across the read+write pair.
+    # (BUG-005 audit claim verified incorrect — the wrapper is not a safe
+    # substitute here; kept as-is.)
     db = get_db()
     with db.lock:
         row = db.conn.execute(
@@ -80,35 +88,49 @@ def verify_chain() -> bool:
     return verify_chain_detailed()[0]
 
 
-def verify_chain_detailed() -> tuple[bool, int | None]:
+def verify_chain_detailed(chunk_size: int = 2000) -> tuple[bool, int | None]:
     """Walk the chain; return ``(ok, broken_id)``.
 
     ``broken_id`` is the ``audit_log.id`` of the first entry whose stored
     ``prev_hash`` or recomputed ``row_hash`` does not match, or ``None`` when the
     chain is fully intact. Used by ``jarvis audit verify`` to report the exact
     offending entry index.
+
+    BUG-010: a single ``db.query()`` over the whole table holds ``db.lock``
+    for the entire scan, blocking every writer (including ``audit_log``
+    itself) for as long as the scan takes — seconds on a large table at
+    boot. Read in bounded chunks instead so each chunk only holds the lock
+    briefly, letting writers interleave between chunks.
     """
     prev_hash = "0" * 64
     db = get_db()
-    for row in db.query(
-        "SELECT id, ts, event, payload, prev_hash, row_hash FROM audit_log ORDER BY id"
-    ):
-        rid, ts, event, payload, stored_prev, stored_hash = (
-            row["id"],
-            row["ts"],
-            row["event"],
-            row["payload"],
-            row["prev_hash"],
-            row["row_hash"],
+    last_id = 0
+    while True:
+        rows = db.query(
+            "SELECT id, ts, event, payload, prev_hash, row_hash FROM audit_log "
+            "WHERE id > ? ORDER BY id LIMIT ?",
+            (last_id, chunk_size),
         )
-        if stored_prev != prev_hash:
-            return (False, rid)
-        expect = hashlib.sha256(
-            f"{prev_hash}{ts}{event}{payload}".encode()
-        ).hexdigest()
-        if expect != stored_hash:
-            return (False, rid)
-        prev_hash = stored_hash
+        if not rows:
+            break
+        for row in rows:
+            rid, ts, event, payload, stored_prev, stored_hash = (
+                row["id"],
+                row["ts"],
+                row["event"],
+                row["payload"],
+                row["prev_hash"],
+                row["row_hash"],
+            )
+            if stored_prev != prev_hash:
+                return (False, rid)
+            expect = hashlib.sha256(
+                f"{prev_hash}{ts}{event}{payload}".encode()
+            ).hexdigest()
+            if expect != stored_hash:
+                return (False, rid)
+            prev_hash = stored_hash
+            last_id = rid
     return (True, None)
 
 

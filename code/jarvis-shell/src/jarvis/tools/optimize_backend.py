@@ -1,6 +1,12 @@
 import subprocess
-import os
 from .registry import register
+from ..paths import repo_root
+
+# BUG-011: no timeout meant a stuck/killed build_script left orphaned
+# compiler/linker child processes running indefinitely. start_new_session
+# puts the child in its own process group so a timeout kill can take the
+# whole group down via os.killpg, not just the immediate shell process.
+_BUILD_TIMEOUT_S = 1800
 
 
 @register(
@@ -20,14 +26,12 @@ def optimize_backend() -> str:
     (fixing the previous signature bug where ``confirm_async`` was expected as a
     parameter but never injected).
     """
-    base_dir = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    )
-    script_path = os.path.join(base_dir, "llama", "scripts", "detect_gpu.py")
+    base_dir = repo_root()
+    script_path = base_dir / "llama" / "scripts" / "detect_gpu.py"
 
     try:
         backend = subprocess.check_output(
-            ["python3", script_path], text=True
+            ["python3", str(script_path)], text=True
         ).strip()
     except Exception as e:
         return f"Failed to detect hardware: {e}"
@@ -35,15 +39,33 @@ def optimize_backend() -> str:
     if backend == "cpu":
         return "You are already using the optimal backend (CPU). No supported GPU was detected."
 
-    build_script = os.path.join(base_dir, "llama", "scripts", "build_backend.sh")
+    build_script = base_dir / "llama" / "scripts" / "build_backend.sh"
+    proc = None
     try:
-        subprocess.run([build_script, backend], check=True, text=True)
+        proc = subprocess.Popen(
+            [str(build_script), backend], text=True, start_new_session=True
+        )
+        try:
+            code = proc.wait(timeout=_BUILD_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            import os
+            import signal
+
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait()
+            return f"Optimization failed: build timed out after {_BUILD_TIMEOUT_S}s"
+        if code != 0:
+            return f"Optimization failed: build_backend.sh exited {code}"
+
         subprocess.run(
-            ["sudo", "systemctl", "restart", "llama-server.service"], check=True
+            ["sudo", "systemctl", "restart", "llama-server.service"],
+            check=True, timeout=60,
         )
         return (
             f"Optimization for {backend.upper()} complete. "
             "The inference server was restarted to use the new backend."
         )
     except subprocess.CalledProcessError as e:
+        return f"Optimization failed: {e}"
+    except Exception as e:
         return f"Optimization failed: {e}"
